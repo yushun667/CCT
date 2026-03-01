@@ -62,3 +62,58 @@ export async function getParseStatistics(
 ): Promise<ParseStatistics> {
   return invoke<ParseStatistics>("get_parse_statistics", { projectId });
 }
+
+// ── 远程项目 ──────────────────────────────────────────────────────
+
+export async function testSshConnection(
+  host: string,
+  port: number,
+  username: string,
+): Promise<boolean> {
+  return invoke<boolean>("test_ssh_connection", { host, port, username });
+}
+
+export interface RemoteFileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  modified: number;
+}
+
+export async function browseRemoteDir(
+  projectId: string,
+  path: string,
+): Promise<RemoteFileEntry[]> {
+  return invoke<RemoteFileEntry[]>("browse_remote_dir", { projectId, path });
+}
+
+export async function deployAgent(projectId: string): Promise<void> {
+  return invoke<void>("deploy_agent", { projectId });
+}
+
+export interface RemoteStatus {
+  ssh_state: "Disconnected" | "Connecting" | "Connected" | "Error";
+  agent_state:
+    | "NotInstalled"
+    | "Stopped"
+    | "Starting"
+    | "Running"
+    | "Error";
+  agent_version: string | null;
+  server_info: {
+    hostname: string;
+    os: string;
+    cpu_cores: number;
+    total_memory_mb: number;
+    available_memory_mb: number;
+    disk_free_mb: number;
+  } | null;
+  last_error: string | null;
+}
+
+export async function getRemoteStatus(
+  projectId: string,
+): Promise<RemoteStatus> {
+  return invoke<RemoteStatus>("get_remote_status", { projectId });
+}

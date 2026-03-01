@@ -4,11 +4,13 @@ import { useI18n } from "vue-i18n";
 import { Message, Modal } from "@arco-design/web-vue";
 import { useProjectStore } from "@/stores/project";
 import CreateProjectDialog from "@/components/project/CreateProjectDialog.vue";
+import RemoteProjectWizard from "@/components/project/RemoteProjectWizard.vue";
 import type { Project } from "@/api/types";
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
 const showCreateDialog = ref(false);
+const showRemoteWizard = ref(false);
 
 onMounted(async () => {
   await projectStore.fetchProjects();
@@ -45,6 +47,12 @@ function handleCreateSuccess() {
   Message.success(t("project.createSuccess"));
 }
 
+function handleRemoteSuccess() {
+  showRemoteWizard.value = false;
+  Message.success(t("project.createSuccess"));
+  projectStore.fetchProjects();
+}
+
 function handleDelete(project: Project) {
   Modal.confirm({
     title: t("project.delete"),
@@ -73,7 +81,7 @@ async function handleParse(project: Project) {
           <template #icon><icon-plus /></template>
           {{ t("project.newLocal") }}
         </a-button>
-        <a-button size="small" disabled>
+        <a-button size="small" @click="showRemoteWizard = true">
           <template #icon><icon-cloud /></template>
           {{ t("project.newRemote") }}
         </a-button>
@@ -167,6 +175,11 @@ async function handleParse(project: Project) {
     <CreateProjectDialog
       v-model:visible="showCreateDialog"
       @success="handleCreateSuccess"
+    />
+
+    <RemoteProjectWizard
+      v-model:visible="showRemoteWizard"
+      @success="handleRemoteSuccess"
     />
   </div>
 </template>

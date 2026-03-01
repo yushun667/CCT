@@ -12,5 +12,6 @@ cct-core = { path = "../cct-core" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+tracing-subscriber = "0.3"
 anyhow.workspace = true
 tokio.workspace = true
