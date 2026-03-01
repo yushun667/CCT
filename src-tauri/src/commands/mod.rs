@@ -1,3 +1,5 @@
+pub mod ai;
+pub mod analysis;
 pub mod editor;
 pub mod graph;
 pub mod parse;

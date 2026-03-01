@@ -4,6 +4,7 @@ import { useSettingsStore } from "@/stores/settings";
 import Sidebar from "./Sidebar.vue";
 import Toolbar from "./Toolbar.vue";
 import StatusBar from "./StatusBar.vue";
+import AiPanel from "@/components/ai/AiPanel.vue";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -35,9 +36,7 @@ const settings = useSettingsStore();
           :width="settings.aiPanelWidth"
           class="ai-panel-sider"
         >
-          <div class="ai-panel-placeholder">
-            <a-empty :description="t('ai.title')" />
-          </div>
+          <AiPanel />
         </a-layout-sider>
       </a-layout>
 
@@ -89,13 +88,6 @@ const settings = useSettingsStore();
 
 .ai-panel-sider {
   border-left: 1px solid var(--color-border);
-}
-
-.ai-panel-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
 }
 
 .bottom-panel {

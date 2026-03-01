@@ -1,3 +1,4 @@
+mod ai;
 mod commands;
 mod logging;
 mod services;
@@ -40,6 +41,21 @@ pub fn run() {
             commands::editor::get_file_symbols,
             commands::graph::get_call_graph,
             commands::graph::get_file_dependency_graph,
+            commands::ai::ai_chat,
+            commands::ai::ai_stop,
+            commands::ai::list_conversations,
+            commands::ai::get_conversation,
+            commands::ai::delete_conversation,
+            commands::ai::get_ai_config,
+            commands::ai::update_ai_config,
+            commands::ai::list_ai_skills,
+            commands::analysis::list_syscalls,
+            commands::analysis::get_syscall_path,
+            commands::analysis::list_ioctl_commands,
+            commands::analysis::list_ipc_services,
+            commands::analysis::get_ipc_call_path,
+            commands::analysis::load_custom_rules,
+            commands::analysis::apply_custom_rules,
         ])
         .run(tauri::generate_context!())
         .expect("CCT 桌面端启动失败");
