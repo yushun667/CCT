@@ -1,0 +1,16 @@
+[package]
+name = "cct-agent"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "cct-agent"
+path = "src/main.rs"
+
+[dependencies]
+cct-core = { path = "../cct-core" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+tokio.workspace = true

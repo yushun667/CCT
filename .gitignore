@@ -1,5 +1,25 @@
+# macOS metadata
 ._*
 .DS_Store
 *.swp
-*.swo
 *~
+
+# Rust build artifacts
+/target/
+/tmp/cct-target/
+
+# Node.js
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Tauri
+src-tauri/gen/
+
+# Environment
+.env
+.env.*

@@ -1,0 +1,119 @@
+{
+  "app": {
+    "name": "CCT",
+    "fullName": "C/C++ Architecture Analysis Platform"
+  },
+  "menu": {
+    "file": "File",
+    "edit": "Edit",
+    "view": "View",
+    "analysis": "Analysis",
+    "tools": "Tools",
+    "help": "Help"
+  },
+  "sidebar": {
+    "projects": "Projects",
+    "files": "File Browser",
+    "search": "Search",
+    "analysis": "Analysis",
+    "ai": "AI Assistant"
+  },
+  "project": {
+    "title": "Projects",
+    "newLocal": "New Local Project",
+    "newRemote": "New Remote Project",
+    "name": "Project Name",
+    "sourceRoot": "Source Root",
+    "compileDb": "Compilation Database",
+    "type": "Project Type",
+    "local": "Local",
+    "remote": "Remote",
+    "noProjects": "No projects yet. Click above to create one.",
+    "delete": "Delete Project",
+    "settings": "Project Settings",
+    "parse": "Parse",
+    "fullParse": "Full Parse",
+    "incrementalParse": "Incremental Parse",
+    "cancelParse": "Cancel Parse"
+  },
+  "parse": {
+    "status": "Parse Status",
+    "notStarted": "Not Started",
+    "inProgress": "In Progress",
+    "completed": "Completed",
+    "failed": "Failed",
+    "progress": "Progress",
+    "files": "Files",
+    "symbols": "Symbols",
+    "relations": "Relations",
+    "elapsed": "Elapsed",
+    "remaining": "Remaining"
+  },
+  "editor": {
+    "title": "Editor",
+    "noFileOpen": "No file open",
+    "goToDefinition": "Go to Definition",
+    "findReferences": "Find References",
+    "showCallGraph": "Show Call Graph"
+  },
+  "graph": {
+    "title": "Graph View",
+    "callGraph": "Call Graph",
+    "moduleGraph": "Module Dependency Graph",
+    "fileGraph": "File Dependency Graph",
+    "zoomIn": "Zoom In",
+    "zoomOut": "Zoom Out",
+    "fitView": "Fit View",
+    "export": "Export"
+  },
+  "search": {
+    "placeholder": "Search symbols...",
+    "noResults": "No results",
+    "callers": "Callers",
+    "callees": "Callees",
+    "references": "References"
+  },
+  "ai": {
+    "title": "AI Assistant",
+    "placeholder": "Ask a question...",
+    "send": "Send",
+    "stop": "Stop",
+    "clear": "Clear",
+    "history": "History",
+    "config": "AI Config"
+  },
+  "settings": {
+    "title": "Settings",
+    "general": "General",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "language": "Language",
+    "editor": "Editor",
+    "parse": "Parse",
+    "ai": "AI",
+    "about": "About"
+  },
+  "status": {
+    "ready": "Ready",
+    "parsing": "Parsing...",
+    "connected": "Connected",
+    "disconnected": "Disconnected"
+  },
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "close": "Close",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "warning": "Warning",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "finish": "Finish"
+  }
+}

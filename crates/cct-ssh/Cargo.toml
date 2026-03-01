@@ -1,0 +1,13 @@
+[package]
+name = "cct-ssh"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+cct-core = { path = "../cct-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+tokio.workspace = true

@@ -1,0 +1,119 @@
+{
+  "app": {
+    "name": "CCT",
+    "fullName": "C/C++ 架构分析平台"
+  },
+  "menu": {
+    "file": "文件",
+    "edit": "编辑",
+    "view": "视图",
+    "analysis": "分析",
+    "tools": "工具",
+    "help": "帮助"
+  },
+  "sidebar": {
+    "projects": "项目管理",
+    "files": "文件浏览",
+    "search": "搜索",
+    "analysis": "分析",
+    "ai": "AI 助手"
+  },
+  "project": {
+    "title": "项目",
+    "newLocal": "新建本地项目",
+    "newRemote": "新建远程项目",
+    "name": "项目名称",
+    "sourceRoot": "源码目录",
+    "compileDb": "编译数据库",
+    "type": "项目类型",
+    "local": "本地",
+    "remote": "远程",
+    "noProjects": "暂无项目，点击上方按钮创建",
+    "delete": "删除项目",
+    "settings": "项目设置",
+    "parse": "解析",
+    "fullParse": "全量解析",
+    "incrementalParse": "增量解析",
+    "cancelParse": "取消解析"
+  },
+  "parse": {
+    "status": "解析状态",
+    "notStarted": "未开始",
+    "inProgress": "解析中",
+    "completed": "已完成",
+    "failed": "失败",
+    "progress": "进度",
+    "files": "文件",
+    "symbols": "符号",
+    "relations": "关系",
+    "elapsed": "耗时",
+    "remaining": "剩余"
+  },
+  "editor": {
+    "title": "编辑器",
+    "noFileOpen": "未打开文件",
+    "goToDefinition": "跳转到定义",
+    "findReferences": "查找引用",
+    "showCallGraph": "显示调用图"
+  },
+  "graph": {
+    "title": "图视图",
+    "callGraph": "调用图",
+    "moduleGraph": "模块依赖图",
+    "fileGraph": "文件依赖图",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "fitView": "适应窗口",
+    "export": "导出"
+  },
+  "search": {
+    "placeholder": "搜索符号...",
+    "noResults": "无结果",
+    "callers": "调用者",
+    "callees": "被调用者",
+    "references": "引用"
+  },
+  "ai": {
+    "title": "AI 助手",
+    "placeholder": "输入问题...",
+    "send": "发送",
+    "stop": "停止",
+    "clear": "清空",
+    "history": "对话历史",
+    "config": "AI 配置"
+  },
+  "settings": {
+    "title": "设置",
+    "general": "通用",
+    "theme": "主题",
+    "themeLight": "浅色",
+    "themeDark": "深色",
+    "themeSystem": "跟随系统",
+    "language": "语言",
+    "editor": "编辑器",
+    "parse": "解析",
+    "ai": "AI",
+    "about": "关于"
+  },
+  "status": {
+    "ready": "就绪",
+    "parsing": "解析中...",
+    "connected": "已连接",
+    "disconnected": "未连接"
+  },
+  "common": {
+    "ok": "确定",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "close": "关闭",
+    "loading": "加载中...",
+    "error": "错误",
+    "success": "成功",
+    "warning": "警告",
+    "confirm": "确认",
+    "back": "返回",
+    "next": "下一步",
+    "finish": "完成"
+  }
+}
