@@ -226,6 +226,7 @@ fn handle_parse_start(params: &Value) -> Result<Value, (i32, String)> {
             &source_path,
             compile_db_path.as_deref(),
             Some(&agent_db_path),
+            &[],
             |progress: ParseProgress| {
                 if cancel_ref.cancelled.load(Ordering::SeqCst) {
                     debug!("检测到取消标记（回调内无法中止 rayon 任务）");

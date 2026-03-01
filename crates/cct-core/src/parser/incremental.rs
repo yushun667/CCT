@@ -73,7 +73,7 @@ impl IncrementalParser {
             "IncrementalParser::detect_changed_files 检测变更文件"
         );
 
-        let disk_files = file_scanner::scan_source_files(source_root, extensions);
+        let disk_files = file_scanner::scan_source_files(source_root, extensions, &[]);
         let mut changed = Vec::new();
         let mut seen_paths: HashSet<String> = HashSet::new();
 
@@ -315,10 +315,11 @@ impl IncrementalParser {
             let remaining = (total - parsed) as f64 / rate.max(0.001);
 
             callback(ParseProgress {
+                phase: "parsing".to_string(),
                 total_files: total,
                 parsed_files: parsed,
                 failed_files: failed,
-                percentage: (parsed as f32 / total as f32) * 100.0,
+                percentage: if total > 0 { ((parsed as f32 / total as f32) * 100.0).clamp(0.0, 100.0) } else { 0.0 },
                 current_file: path_str,
                 symbols_found: 0,
                 relations_found: 0,

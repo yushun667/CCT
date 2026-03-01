@@ -2,3 +2,6 @@
 # 外置硬盘的文件系统会产生 macOS ._metadata 文件导致构建失败，
 # 将编译产物放到本地 SSD 上同时也提升构建速度
 target-dir = "/tmp/cct-target"
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,/Volumes/大硬盘/develop/CCT/third_party/llvm/lib"]

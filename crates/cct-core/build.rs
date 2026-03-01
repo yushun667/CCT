@@ -81,6 +81,8 @@ fn main() {
         "clangRewrite",
         "clangRewriteFrontend",
         "clangIndex",
+        "clangAPINotes",
+        "clangSupport",
     ];
 
     for lib in &clang_libs {
@@ -91,7 +93,8 @@ fn main() {
     let llvm_libs_str = run_llvm_config(&llvm_config, &["--libs", "core", "support", "option",
         "frontendopenmp", "frontendhlsl", "mc", "mcparser", "bitreader",
         "profiledata", "binaryformat", "targetparser", "remarks",
-        "bitstreamreader", "demangle", "textapi"]);
+        "bitstreamreader", "demangle", "textapi",
+        "windowsdriver", "windowsmanifest"]);
 
     for lib in llvm_libs_str.split_whitespace() {
         if let Some(name) = lib.strip_prefix("-l") {

@@ -13,21 +13,46 @@ use crate::error::CctError;
 /// # 参数
 /// - `root`: 源码根目录
 /// - `extensions`: 允许的文件扩展名列表（不含 `.`），如 `["c", "cpp", "h"]`
+/// - `extra_excluded`: 用户自定义的额外排除目录名
 ///
 /// # 返回
 /// 按路径排序的文件列表
-pub fn scan_source_files(root: &Path, extensions: &[&str]) -> Vec<PathBuf> {
+pub fn scan_source_files(
+    root: &Path,
+    extensions: &[&str],
+    extra_excluded: &[String],
+) -> Vec<PathBuf> {
     info!(
         root = %root.display(),
         extensions = ?extensions,
+        extra_excluded = ?extra_excluded,
         "scan_source_files 开始扫描源码目录"
     );
 
     let mut files = Vec::new();
 
+    let builtin_skip: &[&str] = &[
+        ".git", ".svn", ".hg", "node_modules", "__pycache__",
+        ".build", ".cache", ".cct",
+        "test", "tests", "unittests", "unittest", "testing",
+        "benchmarks", "benchmark", "examples", "example",
+    ];
+
     for entry in WalkDir::new(root)
         .follow_links(true)
         .into_iter()
+        .filter_entry(|e| {
+            if e.file_type().is_dir() {
+                let name = e.file_name().to_string_lossy();
+                if builtin_skip.iter().any(|&s| s == &*name) {
+                    return false;
+                }
+                if extra_excluded.iter().any(|s| s == &*name) {
+                    return false;
+                }
+            }
+            true
+        })
         .filter_map(|e| e.ok())
     {
         if !entry.file_type().is_file() {
@@ -35,6 +60,13 @@ pub fn scan_source_files(root: &Path, extensions: &[&str]) -> Vec<PathBuf> {
         }
 
         let path = entry.path();
+
+        if let Some(fname) = path.file_name().and_then(|n| n.to_str()) {
+            if fname.starts_with("._") {
+                continue;
+            }
+        }
+
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             let ext_lower = ext.to_lowercase();
             if extensions.iter().any(|&allowed| allowed == ext_lower) {

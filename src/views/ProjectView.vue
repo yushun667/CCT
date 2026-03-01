@@ -1,21 +1,51 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { Message, Modal } from "@arco-design/web-vue";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "@/stores/project";
-import CreateProjectDialog from "@/components/project/CreateProjectDialog.vue";
 import RemoteProjectWizard from "@/components/project/RemoteProjectWizard.vue";
+import ProjectSettingsDialog from "@/components/project/ProjectSettingsDialog.vue";
 import type { Project } from "@/api/types";
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
-const showCreateDialog = ref(false);
 const showRemoteWizard = ref(false);
+const settingsProject = ref<Project | null>(null);
+const showSettings = ref(false);
+
+const isRunning = computed(
+  () =>
+    projectStore.parseStatus === "running" ||
+    projectStore.parseStatus === "indexing",
+);
 
 onMounted(async () => {
   await projectStore.fetchProjects();
   await projectStore.listenParseProgress();
 });
+
+async function handleOpenDirectory() {
+  const selected = await open({ directory: true, multiple: false });
+  if (!selected) return;
+
+  const dirPath = selected as string;
+  const existing = projectStore.projects.find(
+    (p) => p.source_root === dirPath && p.project_type === "Local",
+  );
+  if (existing) {
+    projectStore.setCurrentProject(existing.id);
+    Message.info(t("project.alreadyExists"));
+    return;
+  }
+
+  try {
+    await projectStore.openLocalDirectory(dirPath);
+    Message.success(t("project.openSuccess"));
+  } catch {
+    // error handled in store
+  }
+}
 
 function getStatusColor(status: string): string {
   const map: Record<string, string> = {
@@ -27,24 +57,25 @@ function getStatusColor(status: string): string {
   return map[status] ?? "gray";
 }
 
-function getStatusLabel(status: string): string {
+function getStatusLabel(project: Project): string {
+  if (project.parse_status === "InProgress" && isRunning.value) {
+    if (projectStore.parseProgress?.phase === "indexing") {
+      return t("parse.indexing");
+    }
+    return t("parse.inProgress");
+  }
   const map: Record<string, string> = {
     NotStarted: t("parse.notStarted"),
     InProgress: t("parse.inProgress"),
     Completed: t("parse.completed"),
     Failed: t("parse.failed"),
   };
-  return map[status] ?? status;
+  return map[project.parse_status] ?? project.parse_status;
 }
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return t("project.never");
   return new Date(dateStr).toLocaleString();
-}
-
-function handleCreateSuccess() {
-  showCreateDialog.value = false;
-  Message.success(t("project.createSuccess"));
 }
 
 function handleRemoteSuccess() {
@@ -70,6 +101,25 @@ async function handleParse(project: Project) {
   Message.info(t("project.parseStarted"));
   await projectStore.fetchProjects();
 }
+
+function handleSettings(project: Project) {
+  settingsProject.value = project;
+  showSettings.value = true;
+}
+
+function handleSettingsSaved() {
+  projectStore.fetchProjects();
+}
+
+function progressLabel(): string {
+  const p = projectStore.parseProgress;
+  if (!p) return "";
+  if (p.phase === "scanning") return t("parse.scanning");
+  if (p.phase === "indexing") {
+    return `${t("parse.indexing")} ${p.parsed_files}/${p.total_files} — ${p.current_file}`;
+  }
+  return `${p.parsed_files}/${p.total_files} — ${p.current_file}`;
+}
 </script>
 
 <template>
@@ -77,9 +127,9 @@ async function handleParse(project: Project) {
     <div class="project-header">
       <h3>{{ t("project.title") }}</h3>
       <a-space>
-        <a-button type="primary" size="small" @click="showCreateDialog = true">
-          <template #icon><icon-plus /></template>
-          {{ t("project.newLocal") }}
+        <a-button type="primary" size="small" @click="handleOpenDirectory">
+          <template #icon><icon-folder /></template>
+          {{ t("project.openDirectory") }}
         </a-button>
         <a-button size="small" @click="showRemoteWizard = true">
           <template #icon><icon-cloud /></template>
@@ -108,7 +158,7 @@ async function handleParse(project: Project) {
           </template>
           <template #extra>
             <a-tag :color="getStatusColor(project.parse_status)" size="small">
-              {{ getStatusLabel(project.parse_status) }}
+              {{ getStatusLabel(project) }}
             </a-tag>
           </template>
 
@@ -128,20 +178,24 @@ async function handleParse(project: Project) {
 
           <!-- 解析进度条 -->
           <div
-            v-if="
-              project.parse_status === 'InProgress' &&
-              projectStore.parseProgress
-            "
+            v-if="isRunning && projectStore.parseProgress"
             class="parse-progress"
           >
             <a-progress
-              :percent="projectStore.parseProgress.percentage / 100"
-              :status="'normal'"
+              :percent="projectStore.parseProgress.percentage"
+              :status="projectStore.parseProgress.phase === 'indexing' ? 'warning' : 'normal'"
               size="small"
             />
-            <span class="progress-text">
-              {{ projectStore.parseProgress.current_file }}
-            </span>
+            <span class="progress-text">{{ progressLabel() }}</span>
+          </div>
+
+          <!-- 解析完成统计 -->
+          <div
+            v-if="projectStore.parseStatus === 'completed' && !isRunning"
+            class="parse-done-banner"
+          >
+            <icon-check-circle style="color: rgb(var(--green-6)); margin-right: 6px" />
+            {{ t("parse.completed") }}
           </div>
 
           <template #actions>
@@ -149,12 +203,17 @@ async function handleParse(project: Project) {
               type="text"
               size="small"
               @click="handleParse(project)"
-              :disabled="project.parse_status === 'InProgress'"
+              :disabled="isRunning"
             >
               <template #icon><icon-play-arrow /></template>
-              {{ t("project.parse") }}
+              {{ isRunning ? t("parse.inProgress") : t("project.parse") }}
             </a-button>
-            <a-button type="text" size="small" disabled>
+            <a-button
+              type="text"
+              size="small"
+              @click="handleSettings(project)"
+              :disabled="isRunning"
+            >
               <template #icon><icon-settings /></template>
               {{ t("project.settings") }}
             </a-button>
@@ -163,6 +222,7 @@ async function handleParse(project: Project) {
               size="small"
               status="danger"
               @click="handleDelete(project)"
+              :disabled="isRunning"
             >
               <template #icon><icon-delete /></template>
               {{ t("common.delete") }}
@@ -172,14 +232,16 @@ async function handleParse(project: Project) {
       </div>
     </a-spin>
 
-    <CreateProjectDialog
-      v-model:visible="showCreateDialog"
-      @success="handleCreateSuccess"
-    />
-
     <RemoteProjectWizard
       v-model:visible="showRemoteWizard"
       @success="handleRemoteSuccess"
+    />
+
+    <ProjectSettingsDialog
+      v-if="settingsProject"
+      v-model:visible="showSettings"
+      :project="settingsProject"
+      @saved="handleSettingsSaved"
     />
   </div>
 </template>
@@ -246,5 +308,13 @@ async function handleParse(project: Project) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.parse-done-banner {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: rgb(var(--green-6));
 }
 </style>

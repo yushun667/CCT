@@ -21,6 +21,9 @@
   "project": {
     "title": "Projects",
     "newLocal": "New Local Project",
+    "openDirectory": "Open Directory",
+    "openSuccess": "Project opened",
+    "alreadyExists": "Project already exists for this directory",
     "newRemote": "New Remote Project",
     "name": "Project Name",
     "sourceRoot": "Source Root",
@@ -28,7 +31,7 @@
     "type": "Project Type",
     "local": "Local",
     "remote": "Remote",
-    "noProjects": "No projects yet. Click above to create one.",
+    "noProjects": "No projects yet. Click \"Open Directory\" to select a C/C++ source directory.",
     "delete": "Delete Project",
     "settings": "Project Settings",
     "parse": "Parse",
@@ -53,6 +56,8 @@
     "status": "Parse Status",
     "notStarted": "Not Started",
     "inProgress": "In Progress",
+    "indexing": "Indexing...",
+    "scanning": "Scanning files...",
     "completed": "Completed",
     "failed": "Failed",
     "progress": "Progress",
@@ -61,6 +66,17 @@
     "relations": "Relations",
     "elapsed": "Elapsed",
     "remaining": "Remaining"
+  },
+  "projectSettings": {
+    "title": "Project Settings",
+    "excludedDirs": "Excluded Directories",
+    "builtinHint": "These directories are skipped automatically (built-in):",
+    "customDirs": "Custom excluded directories:",
+    "dirPlaceholder": "Enter directory name, e.g. build",
+    "dirExists": "Directory already in list",
+    "noneAdded": "No custom excluded directories",
+    "saved": "Project settings saved",
+    "browse": "Browse"
   },
   "editor": {
     "title": "Editor",
@@ -147,6 +163,7 @@
     "catLayout": "Layout",
     "search": "Open Search",
     "toggleSidebar": "Toggle Sidebar",
+    "toggleTerminal": "Toggle Terminal",
     "toggleBottomPanel": "Toggle Bottom Panel",
     "toggleAiPanel": "Toggle AI Panel"
   },
@@ -238,6 +255,21 @@
     "filePath": "File Path",
     "lineNumber": "Line",
     "message": "Message"
+  },
+  "welcome": {
+    "title": "Welcome to CCT",
+    "subtitle": "C/C++ Architecture Analysis Platform",
+    "openProject": "Open Project Directory",
+    "startParse": "Start Parse",
+    "recentProjects": "Recent Projects",
+    "noProject": "Please open a project directory first"
+  },
+  "terminal": {
+    "title": "Terminal",
+    "log": "Log",
+    "parseProgress": "Parse Progress",
+    "newTerminal": "New Terminal",
+    "clear": "Clear"
   },
   "common": {
     "ok": "OK",

@@ -9,12 +9,29 @@
 
 #include "bridge.h"
 
+#include <csetjmp>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <sstream>
 #include <vector>
+
+// ─── 信号保护 ─────────────────────────────────────────────────────
+// Clang 的某些 debug pragma 和 assert 会触发 SIGTRAP/SIGABRT，
+// 导致整个进程崩溃。通过 sigsetjmp/siglongjmp 在解析线程中
+// 捕获这些信号，将崩溃转化为解析错误返回给调用者。
+
+static thread_local sigjmp_buf g_parse_jmpbuf;
+static thread_local volatile sig_atomic_t g_in_parse = 0;
+
+static void cct_crash_handler(int sig) {
+    if (g_in_parse) {
+        g_in_parse = 0;
+        siglongjmp(g_parse_jmpbuf, sig);
+    }
+}
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
@@ -29,6 +46,7 @@
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/ASTUnit.h"
+#include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Lex/PPCallbacks.h"
@@ -671,11 +689,20 @@ int32_t cct_parse_file(
     }
 
     if (!comp_db) {
-        // 无编译数据库时使用默认编译参数
-        std::vector<std::string> args;
-        args.push_back("clang");
-        args.push_back("-std=c++17");
-        args.push_back("-fsyntax-only");
+        // 根据文件扩展名选择 C/C++ 标准
+        std::string std_flag = "-std=c++17";
+        {
+            auto dot = filepath.rfind('.');
+            if (dot != std::string::npos) {
+                std::string ext = filepath.substr(dot + 1);
+                if (ext == "c") {
+                    std_flag = "-std=c17";
+                }
+            }
+        }
+
+        std::vector<std::string> cmd_args = {std_flag, "-fsyntax-only",
+                                              "-w"};  // -w 抑制所有警告
 
         // 解析额外编译参数
         if (extra_args) {
@@ -683,32 +710,58 @@ int32_t cct_parse_file(
             while (*p) {
                 std::string arg(p);
                 if (!arg.empty())
-                    args.push_back(arg);
+                    cmd_args.push_back(arg);
                 p += arg.size() + 1;
             }
         }
 
-        args.push_back(filepath);
-        {
-            int argc = static_cast<int>(args.size());
-            std::vector<const char *> argv;
-            for (auto &a : args) argv.push_back(a.c_str());
-            comp_db = clang::tooling::FixedCompilationDatabase::loadFromCommandLine(
-                argc, argv.data(), error_msg);
-        }
-        if (!comp_db) {
-            // 最终回退：手工创建 FixedCompilationDatabase
-            std::vector<std::string> cmd_args = {"-std=c++17", "-fsyntax-only"};
-            comp_db = std::make_unique<clang::tooling::FixedCompilationDatabase>(
-                ".", cmd_args);
-        }
+        comp_db = std::make_unique<clang::tooling::FixedCompilationDatabase>(
+            ".", cmd_args);
     }
 
     std::vector<std::string> sources = {filepath};
     clang::tooling::ClangTool tool(*comp_db, sources);
 
+    tool.setDiagnosticConsumer(new clang::IgnoringDiagConsumer());
+
+    // 安装信号保护 — 捕获 SIGTRAP/SIGABRT 防止整个进程崩溃
+    struct sigaction sa_new, sa_old_trap, sa_old_abrt;
+    memset(&sa_new, 0, sizeof(sa_new));
+    sa_new.sa_handler = cct_crash_handler;
+    sigemptyset(&sa_new.sa_mask);
+    sa_new.sa_flags = 0;
+
+    sigaction(SIGTRAP, &sa_new, &sa_old_trap);
+    sigaction(SIGABRT, &sa_new, &sa_old_abrt);
+
+    int result;
+    g_in_parse = 1;
+    int crashed_sig = sigsetjmp(g_parse_jmpbuf, 1);
+
+    if (crashed_sig != 0) {
+        // 从信号处理器跳回 — Clang 在解析此文件时崩溃
+        sigaction(SIGTRAP, &sa_old_trap, nullptr);
+        sigaction(SIGABRT, &sa_old_abrt, nullptr);
+
+        std::string empty_json =
+            "{\"symbols\":[],\"calls\":[],\"includes\":[],"
+            "\"inherits\":[],\"references\":[]}";
+        *out_json_len = empty_json.size();
+        *out_json = (char *)malloc(empty_json.size() + 1);
+        if (*out_json) {
+            memcpy(*out_json, empty_json.c_str(), empty_json.size());
+            (*out_json)[empty_json.size()] = '\0';
+        }
+        return -2; // 特殊错误码：解析过程崩溃
+    }
+
     CctActionFactory factory(data);
-    int result = tool.run(&factory);
+    result = tool.run(&factory);
+    g_in_parse = 0;
+
+    // 恢复原始信号处理器
+    sigaction(SIGTRAP, &sa_old_trap, nullptr);
+    sigaction(SIGABRT, &sa_old_abrt, nullptr);
 
     std::string json = data.to_json();
 

@@ -103,15 +103,17 @@ impl Parser for ClangBridgeParser {
     fn parse_file(
         &self,
         file_path: &Path,
-        _compile_args: &[String],
+        compile_args: &[String],
     ) -> Result<ParseResult, CctError> {
         debug!(
             file = %file_path.display(),
+            extra_args_count = compile_args.len(),
             "ClangBridgeParser::parse_file 开始解析文件"
         );
 
         #[cfg(no_clang_bridge)]
         {
+            let _ = compile_args;
             warn!(
                 file = %file_path.display(),
                 "Clang LibTooling 未编译，返回空解析结果"
@@ -121,16 +123,20 @@ impl Parser for ClangBridgeParser {
 
         #[cfg(not(no_clang_bridge))]
         {
-            parse_file_impl(file_path, self.compile_db_path.as_deref())
+            parse_file_impl(file_path, self.compile_db_path.as_deref(), compile_args)
         }
     }
 }
 
 /// 实际的解析实现 — 调用 C++ FFI
+///
+/// `extra_compile_args` 中的每个元素是一个编译参数（如 "-I/path/to/include"），
+/// 仅在没有 compile_commands.json 时生效。
 #[cfg(not(no_clang_bridge))]
 fn parse_file_impl(
     file_path: &Path,
     compile_db_path: Option<&Path>,
+    extra_compile_args: &[String],
 ) -> Result<ParseResult, CctError> {
     use std::ffi::CString;
 
@@ -148,6 +154,24 @@ fn parse_file_impl(
         .map(|s| s.as_ptr())
         .unwrap_or(std::ptr::null());
 
+    // 将 extra_compile_args 编码为 C++ 端期望的格式：
+    // 多个 null 结尾的字符串串联，最后以空字节结束
+    let extra_args_buf: Option<Vec<u8>> = if !extra_compile_args.is_empty() {
+        let mut buf = Vec::new();
+        for arg in extra_compile_args {
+            buf.extend_from_slice(arg.as_bytes());
+            buf.push(0);
+        }
+        buf.push(0); // 终止标志
+        Some(buf)
+    } else {
+        None
+    };
+    let extra_args_ptr = extra_args_buf
+        .as_ref()
+        .map(|b| b.as_ptr() as *const std::os::raw::c_char)
+        .unwrap_or(std::ptr::null());
+
     let mut out_json: *mut std::os::raw::c_char = std::ptr::null_mut();
     let mut out_json_len: u64 = 0;
 
@@ -155,7 +179,7 @@ fn parse_file_impl(
         cct_parse_file(
             c_file.as_ptr(),
             db_ptr,
-            std::ptr::null(),
+            extra_args_ptr,
             &mut out_json,
             &mut out_json_len,
         )

@@ -52,12 +52,19 @@ pub async fn start_full_parse(
     CANCEL_FLAG.store(false, Ordering::SeqCst);
 
     let source_root = project.source_root.clone();
-    let compile_db = project.compile_db_path.clone();
+    let compile_db = project.compile_db_path.clone().or_else(|| {
+        find_compile_commands(&source_root)
+    });
+    if let Some(ref db) = compile_db {
+        info!(compile_db = %db, "使用编译数据库");
+    }
+    let excluded_dirs = project.excluded_dirs.clone();
     let pid = project_id.clone();
     let db_path = index_db_path(&project_id);
 
     app.emit("parse-progress", serde_json::json!({
         "project_id": project_id,
+        "phase": "scanning",
         "total_files": 0,
         "parsed_files": 0,
         "percentage": 0.0,
@@ -88,6 +95,7 @@ pub async fn start_full_parse(
                     std::path::Path::new(&source_root),
                     compile_db_path,
                     Some(&db_path),
+                    &excluded_dirs,
                     |progress| {
                         if CANCEL_FLAG.load(Ordering::SeqCst) || cancel_clone.load(Ordering::SeqCst) {
                             return;
@@ -95,6 +103,7 @@ pub async fn start_full_parse(
 
                         let _ = app.emit("parse-progress", serde_json::json!({
                             "project_id": pid,
+                            "phase": progress.phase,
                             "total_files": progress.total_files,
                             "parsed_files": progress.parsed_files,
                             "failed_files": progress.failed_files,
@@ -525,4 +534,31 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, CctError> {
     }
 
     Ok(result)
+}
+
+/// 自动搜索 compile_commands.json
+///
+/// 依次在源码目录及常见构建子目录中查找，返回第一个找到的路径。
+fn find_compile_commands(source_root: &str) -> Option<String> {
+    let root = std::path::Path::new(source_root);
+    let candidates = [
+        root.join("compile_commands.json"),
+        root.join("build").join("compile_commands.json"),
+        root.join("cmake-build-debug").join("compile_commands.json"),
+        root.join("cmake-build-release").join("compile_commands.json"),
+        root.join("out").join("compile_commands.json"),
+        root.join("out").join("Default").join("compile_commands.json"),
+        root.join("builddir").join("compile_commands.json"),
+        root.join(".build").join("compile_commands.json"),
+    ];
+
+    for path in &candidates {
+        if path.exists() {
+            info!(path = %path.display(), "自动发现 compile_commands.json");
+            return Some(path.display().to_string());
+        }
+    }
+
+    debug!(root = %source_root, "未找到 compile_commands.json，使用默认编译参数");
+    None
 }

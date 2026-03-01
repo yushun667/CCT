@@ -54,13 +54,17 @@ export async function getProject(projectId: string): Promise<Project> {
 
 export async function updateProject(
   projectId: string,
-  name?: string,
-  compileDbPath?: string,
+  opts?: {
+    name?: string;
+    compileDbPath?: string;
+    excludedDirs?: string[];
+  },
 ): Promise<Project> {
   return invoke<Project>("update_project", {
     projectId,
-    name: name ?? null,
-    compileDbPath: compileDbPath ?? null,
+    name: opts?.name ?? null,
+    compileDbPath: opts?.compileDbPath ?? null,
+    excludedDirs: opts?.excludedDirs ?? null,
   });
 }
 

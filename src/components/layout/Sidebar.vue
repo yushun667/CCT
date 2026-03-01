@@ -1,68 +1,122 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch, computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useProjectStore } from "@/stores/project";
+import { useEditorStore } from "@/stores/editor";
 import { useSettingsStore } from "@/stores/settings";
+import * as editorApi from "@/api/editor";
+import type { DirEntry } from "@/api/editor";
 
 const { t } = useI18n();
+const projectStore = useProjectStore();
+const editorStore = useEditorStore();
 const settings = useSettingsStore();
-const activeTab = ref("files");
+
+interface TreeNode {
+  key: string;
+  title: string;
+  isLeaf: boolean;
+  children?: TreeNode[];
+}
+
+const treeData = ref<TreeNode[]>([]);
+const loadingTree = ref(false);
+
+const currentProject = computed(() => projectStore.currentProject);
+
+watch(
+  () => projectStore.currentProject,
+  async (proj) => {
+    if (proj) {
+      await loadRootDir(proj.source_root);
+    } else {
+      treeData.value = [];
+    }
+  },
+  { immediate: true },
+);
+
+async function loadRootDir(rootPath: string) {
+  loadingTree.value = true;
+  try {
+    const entries = await editorApi.listDirectory(rootPath);
+    treeData.value = entriesToNodes(entries);
+  } catch {
+    treeData.value = [];
+  } finally {
+    loadingTree.value = false;
+  }
+}
+
+function entriesToNodes(entries: DirEntry[]): TreeNode[] {
+  return entries.map((e) => ({
+    key: e.path,
+    title: e.name,
+    isLeaf: !e.is_dir,
+    children: e.is_dir ? undefined : undefined,
+  }));
+}
+
+async function onLoadMore(node: TreeNode) {
+  try {
+    const entries = await editorApi.listDirectory(node.key);
+    node.children = entriesToNodes(entries);
+  } catch {
+    node.children = [];
+  }
+  return node;
+}
+
+function onNodeClick(_: string[], data: { node?: TreeNode }) {
+  const node = data.node;
+  if (node && node.isLeaf) {
+    const projectId = projectStore.currentProjectId ?? undefined;
+    editorStore.openFile(node.key, projectId);
+  }
+}
 </script>
 
 <template>
   <div class="sidebar">
     <div v-if="!settings.sidebarCollapsed" class="sidebar-content">
-      <a-menu
-        :selected-keys="[activeTab]"
-        mode="vertical"
-        @menu-item-click="(key: string) => activeTab = key"
-      >
-        <a-menu-item key="files">
-          <template #icon><icon-folder /></template>
-          {{ t("sidebar.files") }}
-        </a-menu-item>
-        <a-menu-item key="search">
-          <template #icon><icon-search /></template>
-          {{ t("sidebar.search") }}
-        </a-menu-item>
-        <a-menu-item key="analysis">
-          <template #icon><icon-mind-mapping /></template>
-          {{ t("sidebar.analysis") }}
-        </a-menu-item>
-      </a-menu>
+      <!-- 项目名称标题 -->
+      <div v-if="currentProject" class="project-header">
+        <icon-folder style="color: var(--color-primary-light-4); flex-shrink: 0" />
+        <span class="project-name" :title="currentProject.source_root">
+          {{ currentProject.name }}
+        </span>
+      </div>
 
-      <div class="sidebar-panel">
-        <div v-if="activeTab === 'files'" class="panel-content">
-          <a-empty :description="t('sidebar.files')" />
-        </div>
-        <div v-else-if="activeTab === 'search'" class="panel-content">
-          <a-input
-            :placeholder="t('search.placeholder')"
-            allow-clear
+      <!-- 文件树 -->
+      <div class="file-tree-area">
+        <a-spin :loading="loadingTree" style="width: 100%">
+          <a-tree
+            v-if="treeData.length > 0"
+            :data="treeData"
+            :load-more="onLoadMore"
+            block-node
             size="small"
+            @select="onNodeClick"
           >
-            <template #prefix><icon-search /></template>
-          </a-input>
-        </div>
-        <div v-else-if="activeTab === 'analysis'" class="panel-content">
-          <a-empty :description="t('sidebar.analysis')" />
-        </div>
+            <template #icon="{ node }">
+              <icon-folder v-if="!node.isLeaf" style="color: var(--color-primary-light-4)" />
+              <icon-code v-else style="color: var(--color-text-3)" />
+            </template>
+          </a-tree>
+          <div v-else class="tree-empty">
+            <a-empty
+              :description="currentProject ? t('sidebar.files') : t('project.noProjects')"
+            />
+          </div>
+        </a-spin>
       </div>
     </div>
 
+    <!-- 折叠态 -->
     <div v-else class="sidebar-collapsed">
       <a-tooltip :content="t('sidebar.files')" position="right">
-        <a-button type="text" @click="activeTab = 'files'; settings.toggleSidebar()">
+        <a-button type="text" @click="settings.toggleSidebar()">
           <template #icon><icon-folder /></template>
-        </a-button>
-      </a-tooltip>
-      <a-tooltip :content="t('sidebar.search')" position="right">
-        <a-button type="text" @click="activeTab = 'search'; settings.toggleSidebar()">
-          <template #icon><icon-search /></template>
-        </a-button>
-      </a-tooltip>
-      <a-tooltip :content="t('sidebar.analysis')" position="right">
-        <a-button type="text" @click="activeTab = 'analysis'; settings.toggleSidebar()">
-          <template #icon><icon-mind-mapping /></template>
         </a-button>
       </a-tooltip>
     </div>
@@ -74,24 +128,45 @@ const activeTab = ref("files");
   height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .sidebar-content {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 
-.sidebar-panel {
+.project-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.project-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree-area {
   flex: 1;
   overflow: auto;
-  padding: 8px;
+  padding: 4px 0;
 }
 
-.panel-content {
+.tree-empty {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
 }
 
 .sidebar-collapsed {

@@ -66,16 +66,18 @@ pub fn get_project(project_id: String) -> Result<Project, CctError> {
 /// - `project_id`: 项目 UUID 字符串
 /// - `name`: 新名称（可选）
 /// - `compile_db_path`: 新编译数据库路径（可选，空字符串表示清除）
+/// - `excluded_dirs`: 排除目录列表（可选）
 #[tauri::command]
 pub fn update_project(
     project_id: String,
     name: Option<String>,
     compile_db_path: Option<String>,
+    excluded_dirs: Option<Vec<String>>,
 ) -> Result<Project, CctError> {
     info!(project_id = %project_id, "Tauri Command: update_project");
     let uuid = parse_project_id(&project_id)?;
     let service = ProjectService::from_default();
-    service.update(&uuid, name, compile_db_path)
+    service.update(&uuid, name, compile_db_path, excluded_dirs)
 }
 
 /// 删除项目

@@ -27,6 +27,12 @@ export const shortcutList: ShortcutEntry[] = [
     category: "shortcuts.catLayout",
   },
   {
+    keys: "Ctrl+`",
+    keysMac: "Ctrl+`",
+    labelKey: "shortcuts.toggleTerminal",
+    category: "shortcuts.catLayout",
+  },
+  {
     keys: "Ctrl+J",
     keysMac: "⌘+J",
     labelKey: "shortcuts.toggleBottomPanel",
@@ -52,6 +58,13 @@ export function useKeyboardShortcuts() {
   const settings = useSettingsStore();
 
   function handleKeydown(e: KeyboardEvent) {
+    // Ctrl+` — 切换终端（不区分 mod 键平台，统一用 ctrlKey）
+    if (e.ctrlKey && e.key === "`") {
+      e.preventDefault();
+      settings.toggleBottomPanel();
+      return;
+    }
+
     const mod = isMac ? e.metaKey : e.ctrlKey;
     if (!mod) return;
 

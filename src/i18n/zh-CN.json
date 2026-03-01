@@ -21,6 +21,9 @@
   "project": {
     "title": "项目",
     "newLocal": "新建本地项目",
+    "openDirectory": "打开目录",
+    "openSuccess": "项目已打开",
+    "alreadyExists": "该目录已有对应项目，已自动选中",
     "newRemote": "新建远程项目",
     "name": "项目名称",
     "sourceRoot": "源码目录",
@@ -28,7 +31,7 @@
     "type": "项目类型",
     "local": "本地",
     "remote": "远程",
-    "noProjects": "暂无项目，点击上方按钮创建",
+    "noProjects": "暂无项目，点击「打开目录」选择 C/C++ 源码目录",
     "delete": "删除项目",
     "settings": "项目设置",
     "parse": "解析",
@@ -53,6 +56,8 @@
     "status": "解析状态",
     "notStarted": "未开始",
     "inProgress": "解析中",
+    "indexing": "写入索引...",
+    "scanning": "扫描文件中...",
     "completed": "已完成",
     "failed": "失败",
     "progress": "进度",
@@ -61,6 +66,17 @@
     "relations": "关系",
     "elapsed": "耗时",
     "remaining": "剩余"
+  },
+  "projectSettings": {
+    "title": "项目设置",
+    "excludedDirs": "解析时忽略的目录",
+    "builtinHint": "以下目录会被自动跳过（内置）：",
+    "customDirs": "自定义忽略目录：",
+    "dirPlaceholder": "输入目录名，如 build",
+    "dirExists": "该目录已在列表中",
+    "noneAdded": "暂无自定义忽略目录",
+    "saved": "项目设置已保存",
+    "browse": "选择目录"
   },
   "editor": {
     "title": "编辑器",
@@ -147,6 +163,7 @@
     "catLayout": "布局",
     "search": "打开搜索",
     "toggleSidebar": "切换侧边栏",
+    "toggleTerminal": "切换终端",
     "toggleBottomPanel": "切换底部面板",
     "toggleAiPanel": "切换 AI 面板"
   },
@@ -238,6 +255,21 @@
     "filePath": "文件路径",
     "lineNumber": "行号",
     "message": "信息"
+  },
+  "welcome": {
+    "title": "欢迎使用 CCT",
+    "subtitle": "C/C++ 架构分析平台",
+    "openProject": "打开项目目录",
+    "startParse": "开始解析",
+    "recentProjects": "最近项目",
+    "noProject": "请先打开一个项目目录"
+  },
+  "terminal": {
+    "title": "终端",
+    "log": "日志",
+    "parseProgress": "解析进度",
+    "newTerminal": "新建终端",
+    "clear": "清空"
   },
   "common": {
     "ok": "确定",

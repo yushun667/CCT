@@ -49,6 +49,20 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
+  async function openLocalDirectory(dirPath: string) {
+    const dirName = dirPath.split("/").filter(Boolean).pop() ?? dirPath;
+    const existing = projects.value.find(
+      (p) => p.source_root === dirPath && p.project_type === "Local",
+    );
+    if (existing) {
+      currentProjectId.value = existing.id;
+      return existing;
+    }
+    const project = await createLocalProject(dirName, dirPath);
+    currentProjectId.value = project.id;
+    return project;
+  }
+
   async function deleteProject(projectId: string) {
     error.value = null;
     try {
@@ -65,16 +79,15 @@ export const useProjectStore = defineStore("project", () => {
 
   async function updateProject(
     projectId: string,
-    name?: string,
-    compileDbPath?: string,
+    opts?: {
+      name?: string;
+      compileDbPath?: string;
+      excludedDirs?: string[];
+    },
   ) {
     error.value = null;
     try {
-      const updated = await projectApi.updateProject(
-        projectId,
-        name,
-        compileDbPath,
-      );
+      const updated = await projectApi.updateProject(projectId, opts);
       const idx = projects.value.findIndex((p) => p.id === projectId);
       if (idx !== -1) {
         projects.value[idx] = updated;
@@ -126,14 +139,32 @@ export const useProjectStore = defineStore("project", () => {
   async function listenParseProgress() {
     await listen<ParseProgress>("parse-progress", (event) => {
       parseProgress.value = event.payload;
-      if (
-        event.payload.parsed_files >= event.payload.total_files &&
-        event.payload.total_files > 0
-      ) {
-        parseStatus.value = "completed";
-        fetchProjects();
+
+      if (event.payload.phase === "parsing") {
+        parseStatus.value = "running";
+      } else if (event.payload.phase === "indexing") {
+        parseStatus.value = "indexing";
       }
     });
+
+    await listen<{ project_id: string; statistics?: unknown }>(
+      "parse-complete",
+      (_event) => {
+        parseStatus.value = "completed";
+        parseProgress.value = null;
+        fetchProjects();
+      },
+    );
+
+    await listen<{ project_id: string; error: string }>(
+      "parse-error",
+      (event) => {
+        parseStatus.value = "error";
+        error.value = event.payload.error;
+        parseProgress.value = null;
+        fetchProjects();
+      },
+    );
   }
 
   return {
@@ -146,6 +177,7 @@ export const useProjectStore = defineStore("project", () => {
     error,
     fetchProjects,
     createLocalProject,
+    openLocalDirectory,
     deleteProject,
     updateProject,
     setCurrentProject,

@@ -60,11 +60,9 @@ async function handleSubmit() {
       form.sourceRoot,
     );
     if (form.compileDbPath) {
-      await projectStore.updateProject(
-        project.id,
-        undefined,
-        form.compileDbPath,
-      );
+      await projectStore.updateProject(project.id, {
+        compileDbPath: form.compileDbPath,
+      });
     }
     resetForm();
     emit("success");

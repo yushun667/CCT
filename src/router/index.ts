@@ -1,47 +1,17 @@
 import { createRouter, createWebHistory } from "vue-router";
 
+/**
+ * 路由已简化为最小配置。
+ * 核心 IDE 功能（编辑器、文件树、AI 面板、终端）全部内嵌在 MainLayout 中，
+ * 无需路由切换。保留 router 实例以备将来扩展（如弹出分析窗口等）。
+ */
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
       path: "/",
-      name: "analysis",
-      component: () => import("@/views/AnalysisView.vue"),
-    },
-    {
-      path: "/projects",
-      name: "projects",
-      component: () => import("@/views/ProjectView.vue"),
-    },
-    {
-      path: "/editor",
-      name: "editor",
-      component: () => import("@/views/EditorView.vue"),
-    },
-    {
-      path: "/graph",
-      name: "graph",
-      component: () => import("@/views/GraphView.vue"),
-    },
-    {
-      path: "/settings",
-      name: "settings",
-      component: () => import("@/views/SettingsView.vue"),
-    },
-    {
-      path: "/kernel",
-      name: "kernel",
-      component: () => import("@/views/KernelAnalysisView.vue"),
-    },
-    {
-      path: "/ipc",
-      name: "ipc",
-      component: () => import("@/views/IpcAnalysisView.vue"),
-    },
-    {
-      path: "/custom-rules",
-      name: "custom-rules",
-      component: () => import("@/views/CustomRulesView.vue"),
+      name: "home",
+      component: () => import("@/App.vue"),
     },
   ],
 });

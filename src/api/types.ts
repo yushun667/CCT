@@ -8,6 +8,7 @@ export interface Project {
   ssh_config: SSHConfig | null;
   agent_config: AgentConfig | null;
   compile_db_path: string | null;
+  excluded_dirs: string[];
   module_definitions: ModuleDef[];
   created_at: string;
   updated_at: string;
@@ -53,6 +54,8 @@ export interface ModuleDef {
 }
 
 export interface ParseProgress {
+  phase: "scanning" | "parsing" | "indexing" | "completed";
+  project_id?: string;
   total_files: number;
   parsed_files: number;
   failed_files: number;

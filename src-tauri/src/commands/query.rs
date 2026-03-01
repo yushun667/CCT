@@ -30,6 +30,26 @@ fn get_db_path(project_id: &str) -> PathBuf {
         .join(format!("{project_id}.db"))
 }
 
+/// 按 ID 列表批量获取符号
+///
+/// # 参数
+/// - `project_id`: 项目 UUID
+/// - `ids`: 符号 ID 列表
+#[tauri::command]
+pub fn get_symbols_by_ids(
+    project_id: String,
+    ids: Vec<i64>,
+) -> Result<Vec<Symbol>, CctError> {
+    info!(
+        project_id = %project_id,
+        count = ids.len(),
+        "Tauri Command: get_symbols_by_ids"
+    );
+
+    let db = open_project_db(&project_id)?;
+    SymbolSearchEngine::get_by_ids(&db, &ids)
+}
+
 /// 搜索符号 — 支持模糊搜索和按类型过滤
 ///
 /// # 参数

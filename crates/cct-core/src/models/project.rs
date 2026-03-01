@@ -13,6 +13,9 @@ pub struct Project {
     pub ssh_config: Option<SSHConfig>,
     pub agent_config: Option<AgentConfig>,
     pub compile_db_path: Option<String>,
+    /// 解析时忽略的目录名列表（例如 "test", "third_party"）
+    #[serde(default)]
+    pub excluded_dirs: Vec<String>,
     pub module_definitions: Vec<ModuleDef>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -107,6 +110,9 @@ pub enum MatchType {
 /// 解析进度 — 前后端事件通道载荷
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParseProgress {
+    /// 当前阶段: "scanning" | "parsing" | "indexing" | "completed"
+    #[serde(default = "default_phase")]
+    pub phase: String,
     pub total_files: u64,
     pub parsed_files: u64,
     pub failed_files: u64,
@@ -116,6 +122,10 @@ pub struct ParseProgress {
     pub relations_found: u64,
     pub elapsed_seconds: f64,
     pub estimated_remaining: f64,
+}
+
+fn default_phase() -> String {
+    "parsing".to_string()
 }
 
 /// 远程状态 — doc/01 UC1.8
@@ -196,6 +206,7 @@ impl Project {
             ssh_config: None,
             agent_config: None,
             compile_db_path: None,
+            excluded_dirs: Vec::new(),
             module_definitions: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -214,6 +225,7 @@ impl Project {
             ssh_config: Some(ssh_config),
             agent_config: Some(AgentConfig::default()),
             compile_db_path: None,
+            excluded_dirs: Vec::new(),
             module_definitions: Vec::new(),
             created_at: now,
             updated_at: now,

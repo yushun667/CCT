@@ -6,6 +6,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Symbol, CallRelation, ReferenceRelation } from "./types";
 
+export async function getSymbolsByIds(
+  projectId: string,
+  ids: number[],
+): Promise<Symbol[]> {
+  if (ids.length === 0) return [];
+  return invoke<Symbol[]>("get_symbols_by_ids", { projectId, ids });
+}
+
 export async function searchSymbols(
   projectId: string,
   query: string,

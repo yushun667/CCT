@@ -79,14 +79,27 @@ async function loadCallGraph(sym: CctSymbol) {
       queryApi.queryCallees(projectId, sym.id, 5),
     ]);
 
-    const fileSymbols = await editorApi.getFileSymbols(
-      projectId,
-      editorStore.activeFile?.filePath ?? "",
-    );
-    const globalSymbols = await queryApi.searchSymbols(projectId, "", undefined, 5000);
-    for (const s of fileSymbols) graphSymMap.set(s.id, s);
-    for (const s of globalSymbols) graphSymMap.set(s.id, s);
     graphSymMap.set(sym.id, sym);
+
+    // 收集所有需要的符号 ID，按需精确查询
+    const neededIds = new Set<number>();
+    for (const r of callerRels) {
+      neededIds.add(r.caller_id);
+      neededIds.add(r.callee_id);
+    }
+    for (const r of calleeRels) {
+      neededIds.add(r.caller_id);
+      neededIds.add(r.callee_id);
+    }
+    neededIds.delete(sym.id);
+
+    if (neededIds.size > 0) {
+      const fetched = await queryApi.getSymbolsByIds(
+        projectId,
+        Array.from(neededIds),
+      );
+      for (const s of fetched) graphSymMap.set(s.id, s);
+    }
 
     graphResults.value = {
       callers: callerRels
@@ -109,6 +122,21 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
 
   try {
     const rels = await queryApi.queryCallers(projectId, sym.id, 1);
+
+    // 按需查询缺失的符号
+    const missingIds = new Set<number>();
+    for (const r of rels) {
+      if (!graphSymMap.has(r.caller_id)) missingIds.add(r.caller_id);
+      if (!graphSymMap.has(r.callee_id)) missingIds.add(r.callee_id);
+    }
+    if (missingIds.size > 0) {
+      const fetched = await queryApi.getSymbolsByIds(
+        projectId,
+        Array.from(missingIds),
+      );
+      for (const s of fetched) graphSymMap.set(s.id, s);
+    }
+
     const existingIds = new Set([
       graphSymbol.value!.id,
       ...graphResults.value.callers.map((s) => s.id),
@@ -154,6 +182,21 @@ async function handleQueryNodeCallees(sym: CctSymbol) {
 
   try {
     const rels = await queryApi.queryCallees(projectId, sym.id, 1);
+
+    // 按需查询缺失的符号
+    const missingIds = new Set<number>();
+    for (const r of rels) {
+      if (!graphSymMap.has(r.caller_id)) missingIds.add(r.caller_id);
+      if (!graphSymMap.has(r.callee_id)) missingIds.add(r.callee_id);
+    }
+    if (missingIds.size > 0) {
+      const fetched = await queryApi.getSymbolsByIds(
+        projectId,
+        Array.from(missingIds),
+      );
+      for (const s of fetched) graphSymMap.set(s.id, s);
+    }
+
     const existingIds = new Set([
       graphSymbol.value!.id,
       ...graphResults.value.callers.map((s) => s.id),

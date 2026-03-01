@@ -44,9 +44,10 @@ impl ProjectService {
         self.projects_dir.join(format!("{}.json", id))
     }
 
-    /// 创建本地项目
+    /// 创建本地项目（或返回已有的同目录项目）
     ///
-    /// 校验源码目录存在且名称不重复后，持久化到 JSON 文件。
+    /// 如果 source_root 已有对应项目，直接返回已有项目。
+    /// 否则校验目录有效性后创建新项目，名称冲突时自动追加时间戳。
     pub fn create_local(&self, name: String, source_root: String) -> Result<Project, CctError> {
         info!(
             name = %name,
@@ -62,12 +63,20 @@ impl ProjectService {
         }
 
         let existing = self.list()?;
-        if existing.iter().any(|p| p.name == name) {
-            error!(name = %name, "项目名称已存在");
-            return Err(CctError::ProjectNameExists(name));
+
+        if let Some(found) = existing.iter().find(|p| p.source_root == source_root) {
+            debug!(id = %found.id, name = %found.name, "目录已有对应项目，直接返回");
+            return Ok(found.clone());
         }
 
-        let project = Project::new_local(name, source_root);
+        let final_name = if existing.iter().any(|p| p.name == name) {
+            let timestamp = Utc::now().format("%m%d-%H%M");
+            format!("{}-{}", name, timestamp)
+        } else {
+            name
+        };
+
+        let project = Project::new_local(final_name, source_root);
         let file = self.project_file(&project.id);
         let content = serde_json::to_string_pretty(&project)?;
         std::fs::write(&file, content)?;
@@ -159,12 +168,13 @@ impl ProjectService {
         Ok(project)
     }
 
-    /// 更新项目字段（名称、编译数据库路径）
+    /// 更新项目字段（名称、编译数据库路径、排除目录）
     pub fn update(
         &self,
         project_id: &Uuid,
         name: Option<String>,
         compile_db_path: Option<String>,
+        excluded_dirs: Option<Vec<String>>,
     ) -> Result<Project, CctError> {
         info!(id = %project_id, "ProjectService::update 更新项目");
         let mut project = self.get(project_id)?;
@@ -187,6 +197,10 @@ impl ProjectService {
             } else {
                 Some(db_path)
             };
+        }
+
+        if let Some(dirs) = excluded_dirs {
+            project.excluded_dirs = dirs;
         }
 
         project.updated_at = Utc::now();

@@ -99,6 +99,45 @@ impl SymbolSearchEngine {
         Ok(results)
     }
 
+    /// 按 ID 列表批量查询符号
+    ///
+    /// # 参数
+    /// - `ids`: 符号 ID 列表
+    pub fn get_by_ids(db: &IndexDatabase, ids: &[i64]) -> Result<Vec<Symbol>, CctError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        info!(count = ids.len(), "SymbolSearchEngine::get_by_ids 批量查询符号");
+
+        let conn = db.conn();
+        let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT {SYMBOL_COLUMNS} FROM symbols WHERE id IN ({placeholders})"
+        );
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| CctError::Database(e.to_string()))?;
+
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+            .iter()
+            .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let results: Vec<Symbol> = stmt
+            .query_map(param_refs.as_slice(), |row| row_to_symbol(row))
+            .map_err(|e| CctError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CctError::Database(e.to_string()))?;
+
+        debug!(count = results.len(), "批量查询完成");
+        Ok(results)
+    }
+
     /// 查询指定文件中的所有符号
     ///
     /// # 参数

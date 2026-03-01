@@ -97,6 +97,42 @@ impl ParseScheduler {
 
         let parser = ClangBridgeParser::new(compile_db)?;
 
+        // 当无 compile_commands.json 时，自动收集项目目录树中的
+        // 所有目录作为 -I include 路径，确保 Clang 能解析跨文件的
+        // #include 指令，进而正确识别被调用函数的声明。
+        let include_args: Vec<String> = if compile_db.is_none() {
+            let scan_start = Instant::now();
+            let mut args = Vec::new();
+            args.push(format!("-I{}", source_root.display()));
+
+            for entry in walkdir::WalkDir::new(source_root)
+                .max_depth(10)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if entry.file_type().is_dir() {
+                    let name = entry.file_name().to_string_lossy();
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    let name_str = name.to_string();
+                    if excluded_dirs.contains(&name_str) {
+                        continue;
+                    }
+                    args.push(format!("-I{}", entry.path().display()));
+                }
+            }
+
+            info!(
+                count = args.len(),
+                elapsed_ms = scan_start.elapsed().as_millis(),
+                "已自动收集 include 路径（无编译数据库模式）"
+            );
+            args
+        } else {
+            Vec::new()
+        };
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.thread_count)
             .stack_size(64 * 1024 * 1024) // 64 MB — Clang 递归 AST 求值需要大栈
@@ -125,7 +161,7 @@ impl ParseScheduler {
                 .map(|file_path| {
                     debug!(file = %file_path.display(), "开始解析文件");
                     let file_start = Instant::now();
-                    let result = parser.parse_file(file_path, &[]);
+                    let result = parser.parse_file(file_path, &include_args);
                     let file_elapsed = file_start.elapsed();
                     if file_elapsed > PER_FILE_TIMEOUT {
                         warn!(
@@ -253,12 +289,21 @@ impl ParseScheduler {
         let mut global_name_to_id: std::collections::HashMap<String, i64> =
             std::collections::HashMap::new();
 
+        // 记录每个 qualified_name 对应符号是否为定义，
+        // 定义优先：避免声明和定义产生不同 ID 导致调用关系查不到
         for (_path, result) in &results {
             if let Ok(pr) = result {
                 for sym in &pr.symbols {
-                    global_name_to_id
-                        .entry(sym.qualified_name.clone())
-                        .or_insert(sym.id);
+                    match global_name_to_id.entry(sym.qualified_name.clone()) {
+                        std::collections::hash_map::Entry::Vacant(e) => {
+                            e.insert(sym.id);
+                        }
+                        std::collections::hash_map::Entry::Occupied(mut e) => {
+                            if sym.is_definition {
+                                e.insert(sym.id);
+                            }
+                        }
+                    }
                 }
             }
         }
