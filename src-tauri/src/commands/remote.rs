@@ -232,11 +232,13 @@ pub async fn get_remote_status(
         }
     }
 
+    let server_info = collect_server_info(&conn).await;
+
     let result = serde_json::json!({
         "ssh_state": "Connected",
         "agent_state": agent_state,
         "agent_version": agent_version,
-        "server_info": null,
+        "server_info": server_info,
         "last_error": null,
     });
 
@@ -244,13 +246,163 @@ pub async fn get_remote_status(
     Ok(result)
 }
 
+/// 收集远程服务器信息
+///
+/// 通过 SSH 执行系统命令获取：主机名、操作系统、CPU核心数、内存、磁盘空间。
+async fn collect_server_info(conn: &SshConnection) -> Option<serde_json::Value> {
+    debug!("collect_server_info — 收集远程服务器信息");
+
+    let hostname = conn
+        .exec_command("hostname")
+        .await
+        .ok()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let os = conn
+        .exec_command("uname -sr")
+        .await
+        .ok()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let cpu_cores: u32 = conn
+        .exec_command("nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0")
+        .await
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+
+    let (total_memory_mb, available_memory_mb) = parse_memory_info(conn).await;
+
+    let disk_free_mb = conn
+        .exec_command("df -m / 2>/dev/null | tail -1 | awk '{print $4}'")
+        .await
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+
+    Some(serde_json::json!({
+        "hostname": hostname,
+        "os": os,
+        "cpu_cores": cpu_cores,
+        "total_memory_mb": total_memory_mb,
+        "available_memory_mb": available_memory_mb,
+        "disk_free_mb": disk_free_mb,
+    }))
+}
+
+async fn parse_memory_info(conn: &SshConnection) -> (u64, u64) {
+    // Try Linux free command first
+    if let Ok(output) = conn.exec_command("free -m 2>/dev/null | grep Mem").await {
+        let parts: Vec<&str> = output.trim().split_whitespace().collect();
+        if parts.len() >= 4 {
+            let total = parts[1].parse::<u64>().unwrap_or(0);
+            let available = parts.get(6).and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| parts.get(3).and_then(|s| s.parse::<u64>().ok()))
+                .unwrap_or(0);
+            return (total, available);
+        }
+    }
+
+    // Fallback for macOS
+    if let Ok(output) = conn.exec_command("sysctl -n hw.memsize 2>/dev/null").await {
+        let bytes = output.trim().parse::<u64>().unwrap_or(0);
+        let total_mb = bytes / (1024 * 1024);
+        return (total_mb, 0);
+    }
+
+    (0, 0)
+}
+
 /// 加载项目的 SSH 配置
 ///
-/// 当前为占位实现，待项目持久化存储集成后替换。
+/// 从 ProjectService 读取项目并提取 ssh_config 字段。
 async fn load_ssh_config(project_id: &str) -> Result<SSHConfig, CctError> {
     info!(project_id = %project_id, "load_ssh_config — 加载 SSH 配置");
-    warn!(project_id = %project_id, "项目持久化存储待集成，当前返回 ProjectNotFound");
-    Err(CctError::ProjectNotFound(project_id.to_string()))
+
+    let uuid = crate::services::project_service::parse_project_id(project_id)?;
+    let service = crate::services::project_service::ProjectService::from_default();
+    let project = service.get(&uuid)?;
+
+    project.ssh_config.ok_or_else(|| {
+        warn!(project_id = %project_id, "项目未配置 SSH");
+        CctError::SshConnectionFailed("项目未配置 SSH 连接信息".to_string())
+    })
+}
+
+/// 浏览远程目录（临时 SSH 配置版本）
+///
+/// 供远程项目创建向导使用，此时项目尚未创建，无法通过 projectId 加载配置。
+///
+/// # 参数
+/// - `ssh_config`: SSH 连接配置（直接传入）
+/// - `path`: 远程目录路径
+#[tauri::command]
+pub async fn browse_remote_dir_temp(
+    ssh_config: SSHConfig,
+    path: String,
+) -> Result<Vec<serde_json::Value>, CctError> {
+    info!(
+        host = %ssh_config.host, path = %path,
+        "Tauri Command: browse_remote_dir_temp"
+    );
+
+    let conn = SshConnection::connect(&ssh_config).await?;
+    let sftp = SftpClient::from_connection(&conn).await?;
+
+    let entries = sftp.list_directory(&path).await?;
+    let result: Vec<serde_json::Value> = entries
+        .into_iter()
+        .map(|e| {
+            serde_json::json!({
+                "name": e.name,
+                "path": e.path,
+                "is_dir": e.is_dir,
+                "size": e.size,
+                "modified": e.modified,
+            })
+        })
+        .collect();
+
+    debug!(host = %ssh_config.host, path = %path, count = result.len(), "远程目录浏览完成");
+    Ok(result)
+}
+
+/// 部署 Agent（临时 SSH 配置版本）
+///
+/// 供远程项目创建向导使用。
+#[tauri::command]
+pub async fn deploy_agent_temp(ssh_config: SSHConfig) -> Result<(), CctError> {
+    info!(
+        host = %ssh_config.host,
+        "Tauri Command: deploy_agent_temp"
+    );
+
+    let conn = SshConnection::connect(&ssh_config).await?;
+    let sftp = SftpClient::from_connection(&conn).await?;
+
+    let install_path = "~/.cct/agent/cct-agent";
+
+    conn.exec_command("mkdir -p ~/.cct/agent").await.map_err(|e| {
+        CctError::AgentDeployFailed(format!("创建安装目录失败: {e}"))
+    })?;
+
+    let local_agent = find_local_agent_binary()?;
+    sftp.upload_file(&local_agent, install_path).await.map_err(|e| {
+        CctError::AgentDeployFailed(format!("上传 Agent 二进制失败: {e}"))
+    })?;
+
+    conn.exec_command(&format!("chmod +x {install_path}"))
+        .await
+        .map_err(|e| {
+            CctError::AgentDeployFailed(format!("设置执行权限失败: {e}"))
+        })?;
+
+    info!(host = %ssh_config.host, "Agent 部署完成（临时配置）");
+    Ok(())
 }
 
 /// 查找本地 Agent 二进制文件路径

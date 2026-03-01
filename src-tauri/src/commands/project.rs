@@ -1,7 +1,7 @@
 use tracing::info;
 
 use cct_core::error::CctError;
-use cct_core::models::project::Project;
+use cct_core::models::project::{Project, SSHConfig};
 
 use crate::services::project_service::{parse_project_id, ProjectService};
 
@@ -19,6 +19,28 @@ pub fn create_local_project(name: String, source_root: String) -> Result<Project
     );
     let service = ProjectService::from_default();
     service.create_local(name, source_root)
+}
+
+/// 创建远程项目
+///
+/// # 参数
+/// - `name`: 项目名称（不可重复）
+/// - `source_root`: 远程服务器上源码根目录的绝对路径
+/// - `ssh_config`: SSH 连接配置
+#[tauri::command]
+pub fn create_remote_project(
+    name: String,
+    source_root: String,
+    ssh_config: SSHConfig,
+) -> Result<Project, CctError> {
+    info!(
+        name = %name,
+        source_root = %source_root,
+        host = %ssh_config.host,
+        "Tauri Command: create_remote_project"
+    );
+    let service = ProjectService::from_default();
+    service.create_remote(name, source_root, ssh_config)
 }
 
 /// 列出所有项目

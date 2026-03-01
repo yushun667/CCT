@@ -76,6 +76,38 @@ impl ProjectService {
         Ok(project)
     }
 
+    /// 创建远程项目
+    ///
+    /// 不校验本地目录存在性，接受 SSH 配置和远程源码路径。
+    pub fn create_remote(
+        &self,
+        name: String,
+        source_root: String,
+        ssh_config: cct_core::models::project::SSHConfig,
+    ) -> Result<Project, CctError> {
+        info!(
+            name = %name,
+            source_root = %source_root,
+            host = %ssh_config.host,
+            "ProjectService::create_remote 创建远程项目"
+        );
+        self.ensure_dir()?;
+
+        let existing = self.list()?;
+        if existing.iter().any(|p| p.name == name) {
+            error!(name = %name, "项目名称已存在");
+            return Err(CctError::ProjectNameExists(name));
+        }
+
+        let project = Project::new_remote(name, source_root, ssh_config);
+        let file = self.project_file(&project.id);
+        let content = serde_json::to_string_pretty(&project)?;
+        std::fs::write(&file, content)?;
+
+        debug!(id = %project.id, name = %project.name, "远程项目已创建");
+        Ok(project)
+    }
+
     /// 列出所有项目，按更新时间倒序
     pub fn list(&self) -> Result<Vec<Project>, CctError> {
         info!("ProjectService::list 列出所有项目");

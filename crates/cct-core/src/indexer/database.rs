@@ -606,6 +606,41 @@ fn ref_kind_to_str(kind: &RefKind) -> &'static str {
 }
 
 impl IndexDatabase {
+    /// 查询解析失败的文件列表
+    ///
+    /// 返回 `file_info` 表中 `parse_status = 'failed'` 的所有记录。
+    pub fn query_failed_files(&self) -> Result<Vec<FileInfo>, CctError> {
+        info!("IndexDatabase::query_failed_files 查询解析失败文件");
+
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT file_path, last_modified, content_hash, parse_status,
+                        error_message, symbol_count, parse_time_ms
+                 FROM file_info WHERE parse_status = 'failed'",
+            )
+            .map_err(map_db_err)?;
+
+        let results = stmt
+            .query_map([], |row| {
+                Ok(FileInfo {
+                    file_path: row.get(0)?,
+                    last_modified: row.get(1)?,
+                    content_hash: row.get(2)?,
+                    parse_status: str_to_parse_status(&row.get::<_, String>(3)?),
+                    error_message: row.get(4)?,
+                    symbol_count: row.get(5)?,
+                    parse_time_ms: row.get(6)?,
+                })
+            })
+            .map_err(map_db_err)?
+            .filter_map(|r| r.ok())
+            .collect::<Vec<_>>();
+
+        debug!(count = results.len(), "失败文件查询完成");
+        Ok(results)
+    }
+
     /// 暴露只读连接引用，供查询模块执行查询
     pub fn conn(&self) -> &Connection {
         &self.conn

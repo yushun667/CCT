@@ -19,6 +19,31 @@ export async function createLocalProject(
   });
 }
 
+export interface SSHConfigParam {
+  host: string;
+  port: number;
+  username: string;
+  auth_method: object | string;
+  key_path: string | null;
+  auth_ref: string;
+  proxy_jump: string | null;
+  keep_alive_interval: number;
+  connect_timeout: number;
+  known_hosts_policy: "Accept" | "Reject" | "AskUser";
+}
+
+export async function createRemoteProject(
+  name: string,
+  sourceRoot: string,
+  sshConfig: SSHConfigParam,
+): Promise<Project> {
+  return invoke<Project>("create_remote_project", {
+    name,
+    sourceRoot,
+    sshConfig,
+  });
+}
+
 export async function listProjects(): Promise<Project[]> {
   return invoke<Project[]>("list_projects");
 }

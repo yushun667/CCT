@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::error::CctError;
 use crate::models::relation::{
-    CallRelation, IncludeRelation, InheritanceRelation,
+    CallRelation, IncludeRelation, InheritanceRelation, RefKind, ReferenceRelation,
 };
 use crate::models::symbol::{Access, Symbol, SymbolKind};
 
@@ -190,6 +190,7 @@ fn parse_file_impl(
         calls = parsed.calls.len(),
         includes = parsed.includes.len(),
         inherits = parsed.inherits.len(),
+        references = parsed.references.len(),
         "文件解析完成"
     );
 
@@ -205,6 +206,8 @@ struct BridgeParseResult {
     calls: Vec<BridgeCall>,
     includes: Vec<BridgeInclude>,
     inherits: Vec<BridgeInherit>,
+    #[serde(default)]
+    references: Vec<BridgeReference>,
 }
 
 #[cfg(not(no_clang_bridge))]
@@ -261,6 +264,16 @@ struct BridgeInherit {
     base: String,
     access: String,
     is_virtual: bool,
+}
+
+#[cfg(not(no_clang_bridge))]
+#[derive(serde::Deserialize)]
+struct BridgeReference {
+    symbol_name: String,
+    file: String,
+    line: u32,
+    column: u32,
+    ref_kind: String,
 }
 
 // ─── 结果转换 ────────────────────────────────────────────────────
@@ -365,11 +378,35 @@ fn convert_bridge_result(parsed: BridgeParseResult, _file_path: &str) -> ParseRe
         })
         .collect();
 
+    let reference_relations: Vec<ReferenceRelation> = parsed
+        .references
+        .iter()
+        .filter_map(|br| {
+            let symbol_id = *symbol_name_to_id.get(&br.symbol_name)?;
+            let kind = match br.ref_kind.as_str() {
+                "read" => RefKind::Read,
+                "write" => RefKind::Write,
+                "address" => RefKind::Address,
+                "call" => RefKind::Call,
+                "type" => RefKind::Type,
+                _ => RefKind::Read,
+            };
+            Some(ReferenceRelation {
+                id: ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+                symbol_id,
+                reference_file: br.file.clone(),
+                reference_line: br.line,
+                reference_column: br.column,
+                reference_kind: kind,
+            })
+        })
+        .collect();
+
     ParseResult {
         symbols,
         call_relations,
         include_relations,
-        reference_relations: Vec::new(),
+        reference_relations,
         inheritance_relations,
     }
 }

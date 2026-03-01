@@ -171,12 +171,33 @@ struct InheritInfo {
     }
 };
 
+struct ReferenceInfo {
+    std::string symbol_name;
+    std::string file_path;
+    unsigned line = 0;
+    unsigned column = 0;
+    std::string ref_kind; // "read", "write", "address", "type"
+
+    std::string to_json() const {
+        std::ostringstream os;
+        os << "{";
+        os << "\"symbol_name\":\"" << json_escape(symbol_name) << "\"";
+        os << ",\"file\":\"" << json_escape(file_path) << "\"";
+        os << ",\"line\":" << line;
+        os << ",\"column\":" << column;
+        os << ",\"ref_kind\":\"" << ref_kind << "\"";
+        os << "}";
+        return os.str();
+    }
+};
+
 struct ParseData {
     std::string main_file;
     std::vector<SymbolInfo> symbols;
     std::vector<CallInfo> calls;
     std::vector<IncludeInfo> includes;
     std::vector<InheritInfo> inherits;
+    std::vector<ReferenceInfo> references;
 
     std::string to_json() const {
         std::ostringstream os;
@@ -207,6 +228,13 @@ struct ParseData {
         for (size_t i = 0; i < inherits.size(); ++i) {
             if (i > 0) os << ",";
             os << inherits[i].to_json();
+        }
+        os << "]";
+
+        os << ",\"references\":[";
+        for (size_t i = 0; i < references.size(); ++i) {
+            if (i > 0) os << ",";
+            os << references[i].to_json();
         }
         os << "]";
 
@@ -424,6 +452,61 @@ public:
         }
 
         data_.calls.push_back(std::move(ci));
+        return true;
+    }
+
+    bool VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
+        if (!is_in_main_file(DRE->getLocation()))
+            return true;
+
+        auto *decl = DRE->getDecl();
+        if (!decl)
+            return true;
+
+        // Skip function call references (already captured by VisitCallExpr)
+        if (llvm::isa<clang::FunctionDecl>(decl)) {
+            auto parents = ctx_.getParents(*DRE);
+            if (!parents.empty()) {
+                if (parents[0].get<clang::CallExpr>() ||
+                    parents[0].get<clang::CXXMemberCallExpr>())
+                    return true;
+            }
+        }
+
+        // Skip parameter declarations
+        if (llvm::isa<clang::ParmVarDecl>(decl))
+            return true;
+
+        ReferenceInfo ri;
+        ri.symbol_name = decl->getQualifiedNameAsString();
+        ri.file_path = get_filename(DRE->getLocation());
+        ri.line = sm_.getSpellingLineNumber(DRE->getLocation());
+        ri.column = sm_.getSpellingColumnNumber(DRE->getLocation());
+
+        // Determine reference kind by checking parent context
+        auto parents = ctx_.getParents(*DRE);
+        if (!parents.empty()) {
+            if (auto *BO = parents[0].get<clang::BinaryOperator>()) {
+                if (BO->isAssignmentOp() && BO->getLHS() == DRE)
+                    ri.ref_kind = "write";
+                else
+                    ri.ref_kind = "read";
+            } else if (parents[0].get<clang::UnaryOperator>()) {
+                auto *UO = parents[0].get<clang::UnaryOperator>();
+                if (UO->getOpcode() == clang::UO_AddrOf)
+                    ri.ref_kind = "address";
+                else if (UO->isIncrementDecrementOp())
+                    ri.ref_kind = "write";
+                else
+                    ri.ref_kind = "read";
+            } else {
+                ri.ref_kind = "read";
+            }
+        } else {
+            ri.ref_kind = "read";
+        }
+
+        data_.references.push_back(std::move(ri));
         return true;
     }
 

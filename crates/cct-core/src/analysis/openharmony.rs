@@ -121,13 +121,11 @@ impl OpenHarmonyAnalyzer {
         for (_name, qualified, _file, _line) in &handlers {
             let svc_name = extract_service_from_qualified(qualified);
             if let Some(service) = services.get_mut(&svc_name) {
-                if service.message_codes.is_empty() {
-                    service.message_codes.push(MessageCode {
-                        code: 0,
-                        name: "ON_REMOTE_REQUEST".to_string(),
-                        handler_function: qualified.clone(),
-                    });
-                }
+                debug!(
+                    service = %svc_name,
+                    handler = %qualified,
+                    "发现 OnRemoteRequest 处理函数（消息码需从源码 switch-case 中提取）"
+                );
             }
         }
 

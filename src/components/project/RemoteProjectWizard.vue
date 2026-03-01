@@ -2,9 +2,10 @@
 import { reactive, ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { Message } from "@arco-design/web-vue";
+import { invoke } from "@tauri-apps/api/core";
 import SshStatusIndicator from "./SshStatusIndicator.vue";
 import * as projectApi from "@/api/project";
-import type { RemoteFileEntry } from "@/api/project";
+import type { RemoteFileEntry, SSHConfigParam } from "@/api/project";
 
 const props = defineProps<{
   visible: boolean;
@@ -83,10 +84,43 @@ async function handleTestConnection() {
   }
 }
 
+function buildSshConfig(): SSHConfigParam {
+  let authMethod: object | string;
+  if (form.authMethod === "key") {
+    authMethod = {
+      Key: {
+        key_path: form.keyPath || "~/.ssh/id_rsa",
+        passphrase_ref: null,
+      },
+    };
+  } else if (form.authMethod === "password") {
+    authMethod = { Password: { password_ref: "" } };
+  } else {
+    authMethod = "Agent";
+  }
+
+  return {
+    host: form.host,
+    port: form.port,
+    username: form.username,
+    auth_method: authMethod,
+    key_path: form.keyPath || null,
+    auth_ref: "",
+    proxy_jump: null,
+    keep_alive_interval: 30,
+    connect_timeout: 15,
+    known_hosts_policy: "Accept",
+  };
+}
+
 async function handleBrowseDir(path: string) {
   try {
     form.remoteRoot = path;
-    remoteDirs.value = await projectApi.browseRemoteDir("", path);
+    const sshConfig = buildSshConfig();
+    remoteDirs.value = await invoke<RemoteFileEntry[]>(
+      "browse_remote_dir_temp",
+      { sshConfig, path },
+    );
   } catch (e) {
     Message.error(String(e));
   }
@@ -102,7 +136,8 @@ function handleSelectPath(entry: RemoteFileEntry) {
 async function handleDeploy() {
   deploying.value = true;
   try {
-    await projectApi.deployAgent("");
+    const sshConfig = buildSshConfig();
+    await invoke("deploy_agent_temp", { sshConfig });
     Message.success(t("remote.deploySuccess"));
   } catch (e) {
     Message.error(String(e));
@@ -129,9 +164,17 @@ function handlePrev() {
   }
 }
 
-function handleFinish() {
-  emit("success");
-  handleClose();
+async function handleFinish() {
+  try {
+    const sshConfig = buildSshConfig();
+    const sourceRoot = form.selectedPath || form.remoteRoot;
+    await projectApi.createRemoteProject(form.name, sourceRoot, sshConfig);
+    Message.success(t("remote.createSuccess") || "远程项目创建成功");
+    emit("success");
+    handleClose();
+  } catch (e) {
+    Message.error(String(e));
+  }
 }
 
 function handleClose() {

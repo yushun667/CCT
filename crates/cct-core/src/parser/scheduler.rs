@@ -3,12 +3,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::error::CctError;
+use crate::indexer::database::IndexDatabase;
 use crate::indexer::file_scanner;
 use crate::models::graph::ParseStatistics;
 use crate::models::project::ParseProgress;
+use crate::models::relation::{FileInfo, FileParseStatus};
 use crate::models::symbol::SymbolKind;
 
 use super::clang_bridge::ClangBridgeParser;
@@ -48,11 +50,12 @@ impl ParseScheduler {
     /// 执行全量/增量解析
     ///
     /// 扫描源码目录中的 C/C++ 文件，使用 rayon 线程池并行解析，
-    /// 通过回调函数实时上报进度。
+    /// 通过回调函数实时上报进度。解析完成后将结果写入索引数据库。
     ///
     /// # 参数
     /// - `source_root`: 源码根目录
     /// - `compile_db`: 可选的编译数据库路径
+    /// - `db_path`: 索引数据库路径；提供后将解析结果持久化到 SQLite
     /// - `progress_callback`: 进度回调，每完成一个文件调用一次
     ///
     /// # 返回
@@ -61,6 +64,7 @@ impl ParseScheduler {
         &self,
         source_root: &Path,
         compile_db: Option<&Path>,
+        db_path: Option<&Path>,
         progress_callback: F,
     ) -> Result<ParseStatistics, CctError>
     where
@@ -218,7 +222,111 @@ impl ParseScheduler {
             "解析任务完成"
         );
 
-        let _ = results;
+        if let Some(db_p) = db_path {
+            info!(db = %db_p.display(), "开始将解析结果写入索引数据库");
+            if let Some(parent) = db_p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match IndexDatabase::open(db_p) {
+                Ok(mut db) => {
+                    if let Err(e) = db.initialize() {
+                        error!(error = %e, "初始化数据库表结构失败");
+                    } else {
+                        let write_start = Instant::now();
+                        let mut total_written_symbols = 0u64;
+                        let mut total_written_relations = 0u64;
+
+                        for (file_path, result) in &results {
+                            let path_str = file_path.display().to_string();
+                            match result {
+                                Ok(pr) => {
+                                    let file_start = Instant::now();
+
+                                    if !pr.symbols.is_empty() {
+                                        if let Err(e) = db.insert_symbols(&pr.symbols) {
+                                            warn!(file = %path_str, error = %e, "写入符号失败");
+                                        } else {
+                                            total_written_symbols += pr.symbols.len() as u64;
+                                        }
+                                    }
+                                    if !pr.call_relations.is_empty() {
+                                        if let Err(e) = db.insert_call_relations(&pr.call_relations) {
+                                            warn!(file = %path_str, error = %e, "写入调用关系失败");
+                                        } else {
+                                            total_written_relations += pr.call_relations.len() as u64;
+                                        }
+                                    }
+                                    if !pr.include_relations.is_empty() {
+                                        if let Err(e) = db.insert_include_relations(&pr.include_relations) {
+                                            warn!(file = %path_str, error = %e, "写入包含关系失败");
+                                        } else {
+                                            total_written_relations += pr.include_relations.len() as u64;
+                                        }
+                                    }
+                                    if !pr.reference_relations.is_empty() {
+                                        if let Err(e) = db.insert_reference_relations(&pr.reference_relations) {
+                                            warn!(file = %path_str, error = %e, "写入引用关系失败");
+                                        } else {
+                                            total_written_relations += pr.reference_relations.len() as u64;
+                                        }
+                                    }
+                                    if !pr.inheritance_relations.is_empty() {
+                                        if let Err(e) = db.insert_inheritance_relations(&pr.inheritance_relations) {
+                                            warn!(file = %path_str, error = %e, "写入继承关系失败");
+                                        } else {
+                                            total_written_relations += pr.inheritance_relations.len() as u64;
+                                        }
+                                    }
+
+                                    let hash = file_scanner::compute_file_hash(file_path)
+                                        .unwrap_or_default();
+                                    let fi = FileInfo {
+                                        file_path: path_str.clone(),
+                                        last_modified: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs() as i64,
+                                        content_hash: hash,
+                                        parse_status: FileParseStatus::Success,
+                                        error_message: None,
+                                        symbol_count: pr.symbols.len() as u32,
+                                        parse_time_ms: Some(file_start.elapsed().as_millis() as u32),
+                                    };
+                                    if let Err(e) = db.upsert_file_info(&fi) {
+                                        warn!(file = %path_str, error = %e, "更新文件信息失败");
+                                    }
+                                }
+                                Err(e) => {
+                                    let fi = FileInfo {
+                                        file_path: path_str.clone(),
+                                        last_modified: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs() as i64,
+                                        content_hash: String::new(),
+                                        parse_status: FileParseStatus::Failed,
+                                        error_message: Some(e.to_string()),
+                                        symbol_count: 0,
+                                        parse_time_ms: None,
+                                    };
+                                    let _ = db.upsert_file_info(&fi);
+                                }
+                            }
+                        }
+
+                        info!(
+                            symbols = total_written_symbols,
+                            relations = total_written_relations,
+                            write_secs = format!("{:.2}", write_start.elapsed().as_secs_f64()),
+                            "索引数据库写入完成"
+                        );
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, db = %db_p.display(), "打开索引数据库失败，解析结果未持久化");
+                }
+            }
+        }
 
         Ok(ParseStatistics {
             total_files,

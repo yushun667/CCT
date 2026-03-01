@@ -163,6 +163,12 @@ fn dispatch(method: &str, params: &Value) -> (Result<Value, (i32, String)>, bool
             (Ok(result), false)
         }
 
+        "index/transfer" => {
+            info!(params = %params, "处理 index/transfer 请求");
+            let result = handle_index_transfer(params);
+            (result, false)
+        }
+
         _ => {
             warn!(method = %method, "未知方法");
             (
@@ -211,10 +217,15 @@ fn handle_parse_start(params: &Value) -> Result<Value, (i32, String)> {
         let source_path = std::path::PathBuf::from(&source_root);
         let compile_db_path = compile_db.map(std::path::PathBuf::from);
 
+        let db_dir = std::path::PathBuf::from(&source_root).join(".cct");
+        let _ = std::fs::create_dir_all(&db_dir);
+        let agent_db_path = db_dir.join("index.db");
+
         let cancel_ref = &state_clone;
         let result = scheduler.schedule_parse(
             &source_path,
             compile_db_path.as_deref(),
+            Some(&agent_db_path),
             |progress: ParseProgress| {
                 if cancel_ref.cancelled.load(Ordering::SeqCst) {
                     debug!("检测到取消标记（回调内无法中止 rayon 任务）");
@@ -252,6 +263,71 @@ fn handle_parse_start(params: &Value) -> Result<Value, (i32, String)> {
         "status": "accepted",
         "message": "解析任务已在后台启动",
     }))
+}
+
+/// 处理 index/transfer 请求 — 读取索引数据库并 base64 编码返回
+fn handle_index_transfer(params: &Value) -> Result<Value, (i32, String)> {
+    info!("handle_index_transfer — 传输索引数据");
+
+    let db_path = params
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or((-32602, "缺少 path 参数".to_string()))?;
+
+    let path = std::path::Path::new(db_path);
+    if !path.exists() {
+        error!(path = %db_path, "索引数据库文件不存在");
+        return Err((-32602, format!("索引数据库不存在: {}", db_path)));
+    }
+
+    let data = std::fs::read(path).map_err(|e| {
+        error!(error = %e, "读取索引数据库失败");
+        (-32603, format!("读取数据库失败: {e}"))
+    })?;
+
+    let encoded = base64_encode(&data);
+    let size_mb = data.len() as f64 / (1024.0 * 1024.0);
+    info!(
+        path = %db_path,
+        size_bytes = data.len(),
+        size_mb = format!("{:.2}", size_mb),
+        "索引数据库读取完成，已 base64 编码"
+    );
+
+    Ok(serde_json::json!({
+        "data": encoded,
+        "size_bytes": data.len(),
+    }))
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        result.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
+
+        if chunk.len() > 1 {
+            result.push(TABLE[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+
+        if chunk.len() > 2 {
+            result.push(TABLE[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+
+    result
 }
 
 fn main() {
