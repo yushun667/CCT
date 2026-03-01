@@ -13,3 +13,6 @@ anyhow.workspace = true
 tokio.workspace = true
 async-trait = "0.1"
 futures = "0.3"
+russh = "0.46"
+russh-keys = "0.46"
+russh-sftp = "2"

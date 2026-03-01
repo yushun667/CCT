@@ -1,7 +1,7 @@
 //! cct-ssh: SSH 通信库
 //!
-//! 提供 SSH 连接管理、SFTP 文件操作和 Agent RPC 通信功能。
-//! M5 阶段实现 — 当前为占位模块，API 形状已定义。
+//! 基于 russh 提供 SSH 连接管理、SFTP 文件操作和 Agent RPC 通信功能。
+//! 支持密钥认证、密码认证和 SSH Agent 三种认证方式。
 
 pub mod agent_client;
 pub mod connection;

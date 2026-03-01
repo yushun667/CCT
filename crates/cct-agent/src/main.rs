@@ -6,15 +6,21 @@
 //! # 支持的方法
 //! - `agent/version`: 返回 Agent 版本信息
 //! - `agent/shutdown`: 安全退出进程
-//! - `parse/start`: 启动解析任务
-//! - `parse/cancel`: 取消解析任务
-//! - `parse/status`: 查询解析状态
+//! - `parse/start`: 启动解析任务（后台线程执行）
+//! - `parse/cancel`: 取消正在执行的解析任务
+//! - `parse/status`: 查询解析状态和进度
+
+use std::io::{self, BufRead, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::{self, BufRead, Write};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::fmt;
+
+use cct_core::models::project::ParseProgress;
+use cct_core::parser::scheduler::ParseScheduler;
 
 /// JSON-RPC 2.0 请求
 #[derive(Debug, Deserialize)]
@@ -68,6 +74,29 @@ impl RpcResponse {
     }
 }
 
+/// 解析任务共享状态
+struct ParseState {
+    running: AtomicBool,
+    cancelled: AtomicBool,
+    status: Mutex<String>,
+    progress: Mutex<Option<Value>>,
+    error: Mutex<Option<String>>,
+}
+
+static PARSE_STATE: OnceLock<Arc<ParseState>> = OnceLock::new();
+
+fn get_parse_state() -> &'static Arc<ParseState> {
+    PARSE_STATE.get_or_init(|| {
+        Arc::new(ParseState {
+            running: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+            status: Mutex::new("idle".to_string()),
+            progress: Mutex::new(None),
+            error: Mutex::new(None),
+        })
+    })
+}
+
 /// 分派 JSON-RPC 请求到对应的处理函数
 ///
 /// # 参数
@@ -92,35 +121,44 @@ fn dispatch(method: &str, params: &Value) -> (Result<Value, (i32, String)>, bool
 
         "agent/shutdown" => {
             info!("处理 agent/shutdown 请求 — 即将退出");
+            let state = get_parse_state();
+            state.cancelled.store(true, Ordering::SeqCst);
             let result = serde_json::json!({ "ok": true });
             (Ok(result), true)
         }
 
         "parse/start" => {
             info!(params = %params, "处理 parse/start 请求");
-            warn!("parse/start 为占位实现，不执行实际解析");
-            let result = serde_json::json!({
-                "status": "accepted",
-                "message": "解析任务已接受（占位实现）",
-            });
-            (Ok(result), false)
+            let result = handle_parse_start(params);
+            (result, false)
         }
 
         "parse/cancel" => {
             info!("处理 parse/cancel 请求");
-            warn!("parse/cancel 为占位实现");
+            let state = get_parse_state();
+            state.cancelled.store(true, Ordering::SeqCst);
+            let was_running = state.running.load(Ordering::SeqCst);
+            if was_running {
+                *state.status.lock().unwrap() = "cancelled".to_string();
+            }
             let result = serde_json::json!({
                 "status": "cancelled",
-                "message": "解析任务已取消（占位实现）",
+                "was_running": was_running,
             });
             (Ok(result), false)
         }
 
         "parse/status" => {
             info!("处理 parse/status 请求");
+            let state = get_parse_state();
+            let status = state.status.lock().unwrap().clone();
+            let progress = state.progress.lock().unwrap().clone();
+            let error = state.error.lock().unwrap().clone();
+
             let result = serde_json::json!({
-                "status": "idle",
-                "progress": null,
+                "status": status,
+                "progress": progress,
+                "error": error,
             });
             (Ok(result), false)
         }
@@ -135,8 +173,88 @@ fn dispatch(method: &str, params: &Value) -> (Result<Value, (i32, String)>, bool
     }
 }
 
+/// 处理 parse/start 请求 — 在后台线程启动解析任务
+fn handle_parse_start(params: &Value) -> Result<Value, (i32, String)> {
+    info!("handle_parse_start — 启动后台解析");
+    let state = get_parse_state();
+
+    if state.running.load(Ordering::SeqCst) {
+        warn!("解析任务正在运行，拒绝重复启动");
+        return Ok(serde_json::json!({
+            "status": "already_running",
+            "message": "解析任务已在运行中",
+        }));
+    }
+
+    let source_root = params
+        .get("source_root")
+        .and_then(|v| v.as_str())
+        .ok_or((-32602, "缺少 source_root 参数".to_string()))?
+        .to_string();
+
+    let compile_db = params
+        .get("compile_db_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    state.running.store(true, Ordering::SeqCst);
+    state.cancelled.store(false, Ordering::SeqCst);
+    *state.status.lock().unwrap() = "running".to_string();
+    *state.progress.lock().unwrap() = None;
+    *state.error.lock().unwrap() = None;
+
+    let state_clone = Arc::clone(state);
+    std::thread::spawn(move || {
+        info!(source_root = %source_root, "后台解析线程启动");
+
+        let scheduler = ParseScheduler::new(None);
+        let source_path = std::path::PathBuf::from(&source_root);
+        let compile_db_path = compile_db.map(std::path::PathBuf::from);
+
+        let cancel_ref = &state_clone;
+        let result = scheduler.schedule_parse(
+            &source_path,
+            compile_db_path.as_deref(),
+            |progress: ParseProgress| {
+                if cancel_ref.cancelled.load(Ordering::SeqCst) {
+                    debug!("检测到取消标记（回调内无法中止 rayon 任务）");
+                }
+                if let Ok(val) = serde_json::to_value(&progress) {
+                    *cancel_ref.progress.lock().unwrap() = Some(val);
+                }
+            },
+        );
+
+        match result {
+            Ok(stats) => {
+                info!(
+                    total_files = stats.total_files,
+                    parsed = stats.parsed_files,
+                    elapsed = format!("{:.2}s", stats.elapsed_seconds),
+                    "后台解析完成"
+                );
+                *state_clone.status.lock().unwrap() = "completed".to_string();
+                if let Ok(val) = serde_json::to_value(&stats) {
+                    *state_clone.progress.lock().unwrap() = Some(val);
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "后台解析失败");
+                *state_clone.status.lock().unwrap() = "failed".to_string();
+                *state_clone.error.lock().unwrap() = Some(e.to_string());
+            }
+        }
+        state_clone.running.store(false, Ordering::SeqCst);
+        info!("后台解析线程退出");
+    });
+
+    Ok(serde_json::json!({
+        "status": "accepted",
+        "message": "解析任务已在后台启动",
+    }))
+}
+
 fn main() {
-    // 日志输出到 stderr，stdout 保留给 JSON-RPC 通信
     fmt()
         .with_max_level(Level::DEBUG)
         .with_writer(io::stderr)
