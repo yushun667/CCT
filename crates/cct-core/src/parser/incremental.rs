@@ -18,6 +18,7 @@ use tracing::{debug, info, trace, warn};
 use crate::error::CctError;
 use crate::indexer::database::IndexDatabase;
 use crate::indexer::file_scanner;
+use super::Parser;
 use crate::models::graph::ParseStatistics;
 use crate::models::project::ParseProgress;
 
@@ -234,16 +235,77 @@ impl IncrementalParser {
                 ChangeType::Added | ChangeType::Modified => {
                     debug!(file = %path_str, change = ?cf.change_type, "重新解析文件");
 
-                    // 修改的文件需先清除旧数据
                     if cf.change_type == ChangeType::Modified {
                         if let Err(e) = db.clear_file_data(&path_str) {
                             warn!(file = %path_str, error = %e, "清除旧索引数据失败");
                         }
                     }
 
-                    // placeholder: 实际解析逻辑需调用 Parser trait
-                    // 此处仅更新 file_info 记录标记为已处理
-                    debug!(file = %path_str, "增量解析占位 — 待集成实际解析器");
+                    let parser = match super::clang_bridge::ClangBridgeParser::new(None) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(error = %e, "创建解析器失败");
+                            failed += 1;
+                            parsed += 1;
+                            continue;
+                        }
+                    };
+
+                    match parser.parse_file(&cf.path, &[]) {
+                        Ok(pr) => {
+                            let sym_count = pr.symbols.len() as u32;
+                            let parse_start = Instant::now();
+
+                            if !pr.symbols.is_empty() {
+                                if let Err(e) = db.insert_symbols(&pr.symbols) {
+                                    warn!(error = %e, "写入符号失败");
+                                }
+                            }
+                            if !pr.call_relations.is_empty() {
+                                if let Err(e) = db.insert_call_relations(&pr.call_relations) {
+                                    warn!(error = %e, "写入调用关系失败");
+                                }
+                            }
+                            if !pr.include_relations.is_empty() {
+                                if let Err(e) = db.insert_include_relations(&pr.include_relations) {
+                                    warn!(error = %e, "写入包含关系失败");
+                                }
+                            }
+                            if !pr.reference_relations.is_empty() {
+                                if let Err(e) = db.insert_reference_relations(&pr.reference_relations) {
+                                    warn!(error = %e, "写入引用关系失败");
+                                }
+                            }
+                            if !pr.inheritance_relations.is_empty() {
+                                if let Err(e) = db.insert_inheritance_relations(&pr.inheritance_relations) {
+                                    warn!(error = %e, "写入继承关系失败");
+                                }
+                            }
+
+                            let hash = file_scanner::compute_file_hash(&cf.path).unwrap_or_default();
+                            let fi = crate::models::relation::FileInfo {
+                                file_path: path_str.clone(),
+                                last_modified: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs() as i64,
+                                content_hash: hash,
+                                parse_status: crate::models::relation::FileParseStatus::Success,
+                                error_message: None,
+                                symbol_count: sym_count,
+                                parse_time_ms: Some(parse_start.elapsed().as_millis() as u32),
+                            };
+                            if let Err(e) = db.upsert_file_info(&fi) {
+                                warn!(error = %e, "更新文件信息失败");
+                            }
+
+                            debug!(file = %path_str, symbols = sym_count, "文件解析写入完成");
+                        }
+                        Err(e) => {
+                            warn!(file = %path_str, error = %e, "文件解析失败");
+                            failed += 1;
+                        }
+                    }
                 }
             }
 

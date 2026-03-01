@@ -20,6 +20,9 @@ dist/
 # Tauri
 src-tauri/gen/
 
+# Third-party precompiled libraries
+third_party/
+
 # Environment
 .env
 .env.*

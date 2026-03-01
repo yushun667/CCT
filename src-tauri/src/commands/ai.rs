@@ -5,7 +5,7 @@
 
 use cct_core::config::{AiConfig, AppConfig};
 use cct_core::error::CctError;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::ai::context;
 use crate::ai::conversation::{Conversation, ConversationStore};
@@ -62,14 +62,28 @@ pub fn ai_chat(
         }
     };
 
-    let _ctx = context::collect_context(&project_id, None, None);
+    let ctx = context::collect_context(&project_id, None, None);
 
     conversation.add_message("user", &message);
 
     let client = LlmClient::new(&config.ai)?;
 
+    let system_prompt = ctx.to_system_prompt();
+    let mut messages_with_context = Vec::with_capacity(conversation.messages.len() + 1);
+    messages_with_context.push(crate::ai::llm_client::ChatMessage {
+        role: "system".to_string(),
+        content: system_prompt,
+    });
+    messages_with_context.extend(conversation.messages.iter().cloned());
+
+    debug!(
+        context_symbols = ctx.related_symbols.len(),
+        total_messages = messages_with_context.len(),
+        "已注入上下文系统消息"
+    );
+
     let app_handle = app.clone();
-    let response = client.chat(&conversation.messages, |chunk| {
+    let response = client.chat(&messages_with_context, |chunk| {
         use tauri::Emitter;
         let _ = app_handle.emit("ai-chunk", chunk);
     })?;
@@ -91,11 +105,17 @@ pub fn ai_chat(
     Ok(serde_json::to_string(&result)?)
 }
 
-/// 停止 AI 生成（占位实现）
+/// 停止 AI 生成
+///
+/// 设置全局停止标志，流式请求循环检测到后会立即中断。
+/// 标志在下次 `chat()` 调用时自动重置。
 #[tauri::command]
 pub fn ai_stop() -> Result<(), CctError> {
     info!("Tauri Command: ai_stop");
-    warn!("ai_stop 当前为占位实现");
+    use crate::ai::llm_client::STOP_FLAG;
+    use std::sync::atomic::Ordering;
+    STOP_FLAG.store(true, Ordering::SeqCst);
+    info!("AI 生成停止标志已设置");
     Ok(())
 }
 

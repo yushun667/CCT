@@ -28,6 +28,7 @@ pub fn run() {
             commands::parse::cancel_parse,
             commands::parse::get_parse_status,
             commands::parse::get_parse_statistics,
+            commands::parse::start_incremental_parse,
             commands::remote::test_ssh_connection,
             commands::remote::browse_remote_dir,
             commands::remote::deploy_agent,

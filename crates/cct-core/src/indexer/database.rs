@@ -655,6 +655,27 @@ impl IndexDatabase {
             )
             .ok()
     }
+
+    /// 按 ID 查询完整符号记录
+    ///
+    /// # 参数
+    /// - `id`: 符号 ID
+    ///
+    /// # 返回
+    /// 存在时返回 `Some(Symbol)`，不存在时返回 `None`
+    pub fn lookup_symbol(&self, id: i64) -> Option<Symbol> {
+        debug!(id = id, "IndexDatabase::lookup_symbol 按 ID 查询符号");
+        self.conn
+            .query_row(
+                "SELECT id, name, qualified_name, kind, sub_kind, file_path, \
+                 line, column, end_line, is_definition, return_type, \
+                 parameters, access, attributes, project_id \
+                 FROM symbols WHERE id = ?1",
+                params![id],
+                |row| row_to_symbol(row),
+            )
+            .ok()
+    }
 }
 
 // ── 公共辅助函数 — 供 query 模块复用 ──────────────────────────────────

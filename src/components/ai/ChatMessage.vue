@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useRouter } from "vue-router";
+import { useEditorStore } from "@/stores/editor";
 
 const props = defineProps<{
   role: "user" | "assistant" | "system";
   content: string;
 }>();
+
+const router = useRouter();
+const editorStore = useEditorStore();
 
 const isUser = computed(() => props.role === "user");
 
@@ -65,14 +70,18 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function handleClick(event: MouseEvent) {
+async function handleClick(event: MouseEvent) {
   const target = event.target as HTMLElement;
   if (target.classList.contains("file-ref")) {
     event.preventDefault();
     const file = target.dataset.file;
     const line = target.dataset.line;
     if (file) {
-      console.log(`Navigate to ${file}:${line}`);
+      await editorStore.openFile(file);
+      await router.push("/editor");
+      if (line) {
+        console.log(`[ChatMessage] 打开文件 ${file}:${line}`);
+      }
     }
   }
 }

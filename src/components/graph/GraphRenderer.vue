@@ -1,15 +1,18 @@
 <script setup lang="ts">
 /**
- * 图渲染器 — 调用图 / 文件依赖图可视化
+ * 图渲染器 — 基于 PixiJS v8 WebGL 的调用图 / 文件依赖图可视化
  *
  * # 设计说明
- * 当前版本使用 Arco Design 的树/列表组件渲染图结构，
- * 后续迭代将替换为 PixiJS/WebGL 实现高性能力导向布局。
- * Canvas 元素已预留，用于未来 PixiJS 集成。
+ * 使用 dagre 进行层次化布局计算，PixiJS v8 Application 进行 WebGL 渲染。
+ * 支持滚轮缩放、拖拽平移、节点点击选中。
+ * 节点按 kind 着色：Function=#4080ff, File=#52c41a, Type=#fa8c16, Module=#722ed1
  */
-import { computed } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import { useGraphStore } from "@/stores/graph";
+import { Application, Graphics, Text, TextStyle, Container } from "pixi.js";
+import type { FederatedPointerEvent } from "pixi.js";
+import dagre from "@dagrejs/dagre";
 import type { GraphNode, GraphEdge } from "@/api/types";
 
 const { t } = useI18n();
@@ -23,103 +26,333 @@ const emit = defineEmits<{
   (e: "node-click", node: GraphNode): void;
 }>();
 
-interface TreeItem {
-  key: string;
-  title: string;
-  kind: string;
+const containerRef = ref<HTMLDivElement | null>(null);
+
+const NODE_WIDTH = 160;
+const NODE_HEIGHT = 40;
+const NODE_RADIUS = 8;
+const ARROW_SIZE = 8;
+const MIN_SCALE = 0.1;
+const MAX_SCALE = 3;
+
+const kindColorMap: Record<string, number> = {
+  Function: 0x4080ff,
+  File: 0x52c41a,
+  Type: 0xfa8c16,
+  Module: 0x722ed1,
+};
+
+function getNodeColor(kind: string): number {
+  return kindColorMap[kind] ?? 0x999999;
+}
+
+let app: Application | null = null;
+let worldContainer: Container | null = null;
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+
+interface LayoutNode {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   node: GraphNode;
-  children: TreeItem[];
 }
 
-const adjacencyList = computed(() => {
-  if (!props.graphData) return new Map<string, string[]>();
-  const adj = new Map<string, string[]>();
-  for (const edge of props.graphData.edges) {
-    const children = adj.get(edge.source) ?? [];
-    children.push(edge.target);
-    adj.set(edge.source, children);
-  }
-  return adj;
-});
+interface LayoutEdge {
+  points: Array<{ x: number; y: number }>;
+  edge: GraphEdge;
+}
 
-const nodeMap = computed(() => {
-  if (!props.graphData) return new Map<string, GraphNode>();
-  const map = new Map<string, GraphNode>();
+const nodeCount = computed(() => props.graphData?.nodes.length ?? 0);
+const edgeCount = computed(() => props.graphData?.edges.length ?? 0);
+const hasData = computed(() => props.graphData && props.graphData.nodes.length > 0);
+
+function computeLayout(): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
+  if (!props.graphData) return { nodes: [], edges: [] };
+
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "TB", ranksep: 60, nodesep: 40, marginx: 40, marginy: 40 });
+  g.setDefaultEdgeLabel(() => ({}));
+
   for (const node of props.graphData.nodes) {
-    map.set(node.id, node);
+    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
   }
-  return map;
-});
-
-const rootNodes = computed(() => {
-  if (!props.graphData) return [];
-  const targetIds = new Set(props.graphData.edges.map((e) => e.target));
-  return props.graphData.nodes.filter((n) => !targetIds.has(n.id));
-});
-
-function buildTree(nodeId: string, visited: Set<string>): TreeItem | null {
-  if (visited.has(nodeId)) return null;
-  visited.add(nodeId);
-
-  const node = nodeMap.value.get(nodeId);
-  if (!node) return null;
-
-  const childIds = adjacencyList.value.get(nodeId) ?? [];
-  const children: TreeItem[] = [];
-  for (const childId of childIds) {
-    const child = buildTree(childId, visited);
-    if (child) children.push(child);
+  for (const edge of props.graphData.edges) {
+    g.setEdge(edge.source, edge.target);
   }
 
-  return {
-    key: node.id,
-    title: node.label,
-    kind: node.kind,
-    node,
-    children,
-  };
-}
+  dagre.layout(g);
 
-const treeData = computed(() => {
-  const visited = new Set<string>();
-  const trees: TreeItem[] = [];
-  for (const root of rootNodes.value) {
-    const tree = buildTree(root.id, visited);
-    if (tree) trees.push(tree);
-  }
-  return trees;
-});
-
-function flattenTree(items: TreeItem[], depth: number): Array<{ item: TreeItem; depth: number }> {
-  const result: Array<{ item: TreeItem; depth: number }> = [];
-  for (const item of items) {
-    result.push({ item, depth });
-    if (item.children.length > 0) {
-      result.push(...flattenTree(item.children, depth + 1));
+  const layoutNodes: LayoutNode[] = [];
+  for (const node of props.graphData.nodes) {
+    const dagreNode = g.node(node.id);
+    if (dagreNode) {
+      layoutNodes.push({
+        id: node.id,
+        x: dagreNode.x - NODE_WIDTH / 2,
+        y: dagreNode.y - NODE_HEIGHT / 2,
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+        node,
+      });
     }
   }
-  return result;
+
+  const layoutEdges: LayoutEdge[] = [];
+  for (const edge of props.graphData.edges) {
+    const dagreEdge = g.edge(edge.source, edge.target);
+    if (dagreEdge?.points) {
+      layoutEdges.push({
+        points: dagreEdge.points.map((p: { x: number; y: number }) => ({ x: p.x, y: p.y })),
+        edge,
+      });
+    }
+  }
+
+  return { nodes: layoutNodes, edges: layoutEdges };
 }
 
-const flatNodes = computed(() => flattenTree(treeData.value, 0));
-
-function onNodeClick(node: GraphNode) {
-  graphStore.selectNode(node.id);
-  emit("node-click", node);
+function drawRoundedRect(
+  gfx: Graphics,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  fillColor: number,
+  isSelected: boolean,
+) {
+  if (isSelected) {
+    gfx.roundRect(x - 2, y - 2, w + 4, h + 4, r + 2);
+    gfx.fill({ color: 0xffffff, alpha: 0.9 });
+    gfx.stroke({ color: fillColor, width: 3 });
+  }
+  gfx.roundRect(x, y, w, h, r);
+  gfx.fill({ color: fillColor, alpha: 0.85 });
 }
 
-function dotColor(kind: string): string {
-  switch (kind) {
-    case "Function":
-      return "rgb(var(--primary-6, 22, 93, 255))";
-    case "File":
-      return "rgb(var(--success-6, 0, 180, 42))";
-    case "Type":
-      return "rgb(var(--warning-6, 255, 125, 0))";
-    default:
-      return "#999";
+function drawArrow(gfx: Graphics, toX: number, toY: number, fromX: number, fromY: number) {
+  const angle = Math.atan2(toY - fromY, toX - fromX);
+  const x1 = toX - ARROW_SIZE * Math.cos(angle - Math.PI / 6);
+  const y1 = toY - ARROW_SIZE * Math.sin(angle - Math.PI / 6);
+  const x2 = toX - ARROW_SIZE * Math.cos(angle + Math.PI / 6);
+  const y2 = toY - ARROW_SIZE * Math.sin(angle + Math.PI / 6);
+
+  gfx.moveTo(toX, toY);
+  gfx.lineTo(x1, y1);
+  gfx.moveTo(toX, toY);
+  gfx.lineTo(x2, y2);
+  gfx.stroke({ color: 0x999999, width: 1.5 });
+}
+
+function renderGraph() {
+  if (!app || !worldContainer) return;
+
+  worldContainer.removeChildren();
+
+  if (!hasData.value) return;
+
+  const { nodes, edges } = computeLayout();
+
+  const edgeGfx = new Graphics();
+  for (const layoutEdge of edges) {
+    const pts = layoutEdge.points;
+    if (pts.length < 2) continue;
+
+    edgeGfx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      edgeGfx.lineTo(pts[i].x, pts[i].y);
+    }
+    edgeGfx.stroke({ color: 0x999999, width: 1.2, alpha: 0.6 });
+
+    const last = pts[pts.length - 1];
+    const prev = pts[pts.length - 2];
+    drawArrow(edgeGfx, last.x, last.y, prev.x, prev.y);
+  }
+  worldContainer.addChild(edgeGfx);
+
+  const nodeIdToGfx = new Map<string, Container>();
+  for (const ln of nodes) {
+    const nodeContainer = new Container();
+    nodeContainer.position.set(ln.x, ln.y);
+    nodeContainer.eventMode = "static";
+    nodeContainer.cursor = "pointer";
+
+    const color = getNodeColor(ln.node.kind);
+    const isSelected = graphStore.selectedNodeId === ln.id;
+
+    const bg = new Graphics();
+    drawRoundedRect(bg, 0, 0, ln.width, ln.height, NODE_RADIUS, color, isSelected);
+    nodeContainer.addChild(bg);
+
+    const labelStyle = new TextStyle({
+      fontSize: 12,
+      fill: 0xffffff,
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      wordWrap: false,
+    });
+    const label = new Text({ text: truncateLabel(ln.node.label, 18), style: labelStyle });
+    label.anchor.set(0.5, 0.5);
+    label.position.set(ln.width / 2, ln.height / 2);
+    nodeContainer.addChild(label);
+
+    const graphNode = ln.node;
+    nodeContainer.on("pointerdown", (ev: FederatedPointerEvent) => {
+      ev.stopPropagation();
+      graphStore.selectNode(graphNode.id);
+      emit("node-click", graphNode);
+      renderGraph();
+    });
+
+    worldContainer.addChild(nodeContainer);
+    nodeIdToGfx.set(ln.id, nodeContainer);
   }
 }
+
+function truncateLabel(label: string, maxLen: number): string {
+  return label.length > maxLen ? label.slice(0, maxLen - 1) + "…" : label;
+}
+
+function handleWheel(ev: WheelEvent) {
+  if (!worldContainer) return;
+  ev.preventDefault();
+
+  const scaleFactor = ev.deltaY > 0 ? 0.9 : 1.1;
+  const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, worldContainer.scale.x * scaleFactor));
+
+  const rect = containerRef.value?.getBoundingClientRect();
+  if (!rect) return;
+
+  const mouseX = ev.clientX - rect.left;
+  const mouseY = ev.clientY - rect.top;
+
+  const worldX = (mouseX - worldContainer.x) / worldContainer.scale.x;
+  const worldY = (mouseY - worldContainer.y) / worldContainer.scale.y;
+
+  worldContainer.scale.set(newScale, newScale);
+  worldContainer.x = mouseX - worldX * newScale;
+  worldContainer.y = mouseY - worldY * newScale;
+}
+
+function handlePointerDown(ev: FederatedPointerEvent) {
+  isPanning = true;
+  panStart = { x: ev.globalX, y: ev.globalY };
+}
+
+function handlePointerMove(ev: FederatedPointerEvent) {
+  if (!isPanning || !worldContainer) return;
+  const dx = ev.globalX - panStart.x;
+  const dy = ev.globalY - panStart.y;
+  worldContainer.x += dx;
+  worldContainer.y += dy;
+  panStart = { x: ev.globalX, y: ev.globalY };
+}
+
+function handlePointerUp() {
+  isPanning = false;
+}
+
+async function initPixi() {
+  if (!containerRef.value) return;
+
+  const container = containerRef.value;
+  const { clientWidth: width, clientHeight: height } = container;
+
+  app = new Application();
+  await app.init({
+    width: width || 800,
+    height: height || 600,
+    backgroundColor: 0x1e1e2e,
+    antialias: true,
+    resolution: window.devicePixelRatio || 1,
+    autoDensity: true,
+  });
+
+  container.appendChild(app.canvas);
+  app.canvas.style.width = "100%";
+  app.canvas.style.height = "100%";
+
+  worldContainer = new Container();
+  app.stage.addChild(worldContainer);
+
+  app.stage.eventMode = "static";
+  app.stage.hitArea = app.screen;
+  app.stage.on("pointerdown", handlePointerDown);
+  app.stage.on("pointermove", handlePointerMove);
+  app.stage.on("pointerup", handlePointerUp);
+  app.stage.on("pointerupoutside", handlePointerUp);
+
+  container.addEventListener("wheel", handleWheel, { passive: false });
+
+  renderGraph();
+}
+
+function destroyPixi() {
+  if (containerRef.value) {
+    containerRef.value.removeEventListener("wheel", handleWheel);
+  }
+  if (app) {
+    app.destroy(true, { children: true });
+    app = null;
+    worldContainer = null;
+  }
+}
+
+function resizeRenderer() {
+  if (!app || !containerRef.value) return;
+  const { clientWidth: w, clientHeight: h } = containerRef.value;
+  if (w > 0 && h > 0) {
+    app.renderer.resize(w, h);
+    app.stage.hitArea = app.screen;
+  }
+}
+
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(async () => {
+  await nextTick();
+  if (hasData.value) {
+    await initPixi();
+  }
+
+  if (containerRef.value) {
+    resizeObserver = new ResizeObserver(() => resizeRenderer());
+    resizeObserver.observe(containerRef.value);
+  }
+});
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  destroyPixi();
+});
+
+watch(
+  () => props.graphData,
+  async () => {
+    if (hasData.value) {
+      if (!app) {
+        await nextTick();
+        await initPixi();
+      } else {
+        renderGraph();
+      }
+    } else {
+      destroyPixi();
+    }
+  },
+  { deep: true },
+);
+
+watch(
+  () => graphStore.selectedNodeId,
+  () => {
+    if (app && worldContainer) {
+      renderGraph();
+    }
+  },
+);
 </script>
 
 <template>
@@ -128,41 +361,18 @@ function dotColor(kind: string): string {
       <a-space>
         <a-tag>{{ t("graph.title") }}</a-tag>
         <a-tag color="arcoblue">
-          {{ graphStore.nodeCount }} {{ t("parse.symbols") }}
+          {{ nodeCount }} {{ t("parse.symbols") }}
         </a-tag>
         <a-tag color="green">
-          {{ graphStore.edgeCount }} {{ t("parse.relations") }}
+          {{ edgeCount }} {{ t("parse.relations") }}
         </a-tag>
       </a-space>
     </div>
 
-    <!-- 预留 Canvas（未来 PixiJS 集成） -->
-    <canvas class="graph-canvas" style="display: none" />
-
-    <div v-if="!props.graphData" class="empty-state">
+    <div v-if="!hasData" class="empty-state">
       <a-empty :description="t('search.noResults')" />
     </div>
-    <div v-else class="tree-container">
-      <div v-if="flatNodes.length === 0" class="empty-state">
-        <a-empty :description="t('search.noResults')" />
-      </div>
-      <div v-else class="tree-list">
-        <div
-          v-for="({ item, depth }, idx) in flatNodes"
-          :key="`${item.key}-${idx}`"
-          class="tree-node-content"
-          :style="{ paddingLeft: `${depth * 20 + 8}px` }"
-          @click="onNodeClick(item.node)"
-        >
-          <span
-            class="node-dot"
-            :style="{ background: dotColor(item.kind) }"
-          />
-          <span class="node-label">{{ item.title }}</span>
-          <span class="node-kind">{{ item.kind }}</span>
-        </div>
-      </div>
-    </div>
+    <div v-else ref="containerRef" class="graph-canvas-container" />
   </div>
 </template>
 
@@ -179,11 +389,6 @@ function dotColor(kind: string): string {
   flex-shrink: 0;
 }
 
-.graph-canvas {
-  width: 100%;
-  height: 100%;
-}
-
 .empty-state {
   display: flex;
   align-items: center;
@@ -192,49 +397,9 @@ function dotColor(kind: string): string {
   padding: 48px;
 }
 
-.tree-container {
-  flex: 1;
-  overflow: auto;
-  padding: 8px;
-}
-
-.tree-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.tree-node-content {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
-  font-size: 13px;
-}
-
-.tree-node-content:hover {
-  background: var(--color-fill-2);
-}
-
-.node-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.node-label {
+.graph-canvas-container {
   flex: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-kind {
-  font-size: 11px;
-  color: var(--color-text-3);
-  flex-shrink: 0;
+  position: relative;
 }
 </style>

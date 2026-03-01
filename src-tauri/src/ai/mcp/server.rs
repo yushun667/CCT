@@ -16,6 +16,11 @@ use std::io::{self, BufRead, Write};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
+use cct_core::indexer::database::IndexDatabase;
+use cct_core::query::{CallQueryEngine, IncludeQueryEngine, SymbolSearchEngine};
+
+use crate::ai::skills::index_db_path;
+
 /// JSON-RPC 2.0 请求
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -76,6 +81,8 @@ pub struct McpServer {
     version: String,
     /// 是否正在运行
     running: bool,
+    /// 当前活动的项目 ID，用于定位索引数据库
+    current_project_id: Option<String>,
 }
 
 impl McpServer {
@@ -94,7 +101,35 @@ impl McpServer {
             name: name.to_string(),
             version: version.to_string(),
             running: false,
+            current_project_id: None,
         }
+    }
+
+    /// 设置当前项目 ID
+    ///
+    /// MCP 工具和资源查询需要知道目标项目，
+    /// 在启动前或处理 initialize 请求时调用。
+    pub fn set_project_id(&mut self, project_id: &str) {
+        info!(project_id = %project_id, "McpServer::set_project_id 设置当前项目");
+        self.current_project_id = Some(project_id.to_string());
+    }
+
+    /// 尝试打开当前项目的索引数据库
+    fn open_db(&self) -> Result<IndexDatabase, JsonRpcError> {
+        let project_id = self.current_project_id.as_deref().ok_or_else(|| {
+            JsonRpcError {
+                code: -32603,
+                message: "未设置当前项目 ID".to_string(),
+                data: None,
+            }
+        })?;
+
+        let db_path = index_db_path(project_id);
+        IndexDatabase::open(&db_path).map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("无法打开索引数据库: {}", e),
+            data: None,
+        })
     }
 
     /// 启动 MCP Server — 循环读取 stdin 并分发处理
@@ -163,7 +198,7 @@ impl McpServer {
     }
 
     /// 请求分发 — 根据 method 路由到对应处理器
-    fn dispatch(&self, req: JsonRpcRequest) -> JsonRpcResponse {
+    fn dispatch(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         let id = req.id.clone().unwrap_or(serde_json::Value::Null);
         info!(method = %req.method, "McpServer::dispatch 分发请求");
 
@@ -199,12 +234,20 @@ impl McpServer {
         }
     }
 
-    /// 处理 initialize — 返回服务器能力声明
+    /// 处理 initialize — 返回服务器能力声明，并提取 project_id
     fn handle_initialize(
-        &self,
-        _params: &serde_json::Value,
+        &mut self,
+        params: &serde_json::Value,
     ) -> Result<serde_json::Value, JsonRpcError> {
         info!("McpServer::handle_initialize 处理初始化请求");
+
+        if let Some(pid) = params
+            .get("initializationOptions")
+            .and_then(|o| o.get("project_id"))
+            .and_then(|v| v.as_str())
+        {
+            self.set_project_id(pid);
+        }
 
         Ok(serde_json::json!({
             "protocolVersion": "2024-11-05",
@@ -247,7 +290,7 @@ impl McpServer {
         Ok(serde_json::json!({ "resources": resources }))
     }
 
-    /// 读取指定资源
+    /// 读取指定资源 — 连接索引数据库返回真实数据
     fn handle_read_resource(
         &self,
         params: &serde_json::Value,
@@ -259,33 +302,20 @@ impl McpServer {
 
         info!(uri = uri, "McpServer::handle_read_resource 读取资源");
 
-        // placeholder: 返回占位数据
         let content = match uri {
             "cct://project/info" => {
-                debug!("返回项目信息占位数据");
-                serde_json::json!({
-                    "name": "CCT Project",
-                    "status": "placeholder",
-                    "message": "MCP Server 资源读取功能待与索引数据库集成"
-                })
+                debug!("返回项目信息");
+                self.read_project_info()?
             }
             _ if uri.starts_with("cct://symbols/") => {
-                let symbol_id = uri.strip_prefix("cct://symbols/").unwrap_or("0");
-                debug!(symbol_id = symbol_id, "返回符号占位数据");
-                serde_json::json!({
-                    "id": symbol_id,
-                    "status": "placeholder",
-                    "message": "符号查询待集成"
-                })
+                let symbol_id_str = uri.strip_prefix("cct://symbols/").unwrap_or("0");
+                debug!(symbol_id = symbol_id_str, "查询符号详情");
+                self.read_symbol_details(symbol_id_str)?
             }
             _ if uri.starts_with("cct://file/") => {
                 let file_path = uri.strip_prefix("cct://file/").unwrap_or("");
-                debug!(file_path = file_path, "返回文件内容占位数据");
-                serde_json::json!({
-                    "path": file_path,
-                    "status": "placeholder",
-                    "message": "文件读取待集成"
-                })
+                debug!(file_path = file_path, "读取文件内容");
+                self.read_file_content(file_path)?
             }
             _ => {
                 warn!(uri = uri, "未知资源 URI");
@@ -302,6 +332,90 @@ impl McpServer {
                 "uri": uri,
                 "text": serde_json::to_string_pretty(&content).unwrap_or_default()
             }]
+        }))
+    }
+
+    fn read_project_info(&self) -> Result<serde_json::Value, JsonRpcError> {
+        info!("McpServer::read_project_info 读取项目信息");
+        let project_id = self.current_project_id.as_deref().unwrap_or("unknown");
+
+        match self.open_db() {
+            Ok(db) => {
+                let stats = db.get_statistics().map_err(|e| JsonRpcError {
+                    code: -32603,
+                    message: format!("统计信息查询失败: {}", e),
+                    data: None,
+                })?;
+
+                Ok(serde_json::json!({
+                    "project_id": project_id,
+                    "status": "indexed",
+                    "statistics": {
+                        "total_files": stats.total_files,
+                        "parsed_files": stats.parsed_files,
+                        "total_symbols": stats.total_symbols,
+                        "total_functions": stats.total_functions,
+                        "total_variables": stats.total_variables,
+                        "total_types": stats.total_types,
+                        "total_macros": stats.total_macros,
+                        "total_call_relations": stats.total_call_relations,
+                        "total_include_relations": stats.total_include_relations,
+                    }
+                }))
+            }
+            Err(_) => {
+                Ok(serde_json::json!({
+                    "project_id": project_id,
+                    "status": "not_indexed",
+                    "message": "索引数据库未找到或无法打开"
+                }))
+            }
+        }
+    }
+
+    fn read_symbol_details(&self, symbol_id_str: &str) -> Result<serde_json::Value, JsonRpcError> {
+        info!(symbol_id = %symbol_id_str, "McpServer::read_symbol_details 查询符号");
+        let id: i64 = symbol_id_str.parse().map_err(|_| JsonRpcError {
+            code: -32602,
+            message: format!("无效的符号 ID: {}", symbol_id_str),
+            data: None,
+        })?;
+
+        let db = self.open_db()?;
+        let symbol = db.lookup_symbol(id).ok_or_else(|| JsonRpcError {
+            code: -32602,
+            message: format!("符号 ID={} 未找到", id),
+            data: None,
+        })?;
+
+        Ok(serde_json::json!({
+            "id": symbol.id,
+            "name": symbol.name,
+            "qualified_name": symbol.qualified_name,
+            "kind": format!("{}", symbol.kind),
+            "file_path": symbol.file_path,
+            "line": symbol.line,
+            "column": symbol.column,
+            "end_line": symbol.end_line,
+            "is_definition": symbol.is_definition,
+            "return_type": symbol.return_type,
+            "parameters": symbol.parameters,
+            "access": symbol.access.as_ref().map(|a| format!("{:?}", a)),
+        }))
+    }
+
+    fn read_file_content(&self, file_path: &str) -> Result<serde_json::Value, JsonRpcError> {
+        info!(file = %file_path, "McpServer::read_file_content 读取文件");
+        let content = std::fs::read_to_string(file_path).map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("文件读取失败 {}: {}", file_path, e),
+            data: None,
+        })?;
+
+        Ok(serde_json::json!({
+            "path": file_path,
+            "content": content,
+            "lines": content.lines().count(),
         }))
     }
 
@@ -351,7 +465,7 @@ impl McpServer {
         Ok(serde_json::json!({ "tools": tools }))
     }
 
-    /// 调用指定工具
+    /// 调用指定工具 — 连接索引数据库执行真实查询
     fn handle_call_tool(
         &self,
         params: &serde_json::Value,
@@ -370,32 +484,10 @@ impl McpServer {
             "McpServer::handle_call_tool 调用工具"
         );
 
-        // placeholder: 返回占位结果
         let result_text = match tool_name {
-            "search_symbols" => {
-                let query = arguments
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                debug!(query = query, "执行符号搜索（占位）");
-                format!("符号搜索 '{query}' — 功能待与索引数据库集成")
-            }
-            "query_call_graph" => {
-                let symbol = arguments
-                    .get("symbol_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                debug!(symbol = symbol, "执行调用图查询（占位）");
-                format!("调用图查询 '{symbol}' — 功能待与查询引擎集成")
-            }
-            "analyze_file" => {
-                let path = arguments
-                    .get("file_path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                debug!(path = path, "执行文件分析（占位）");
-                format!("文件分析 '{path}' — 功能待集成")
-            }
+            "search_symbols" => self.tool_search_symbols(&arguments)?,
+            "query_call_graph" => self.tool_query_call_graph(&arguments)?,
+            "analyze_file" => self.tool_analyze_file(&arguments)?,
             _ => {
                 warn!(tool = tool_name, "未知工具");
                 return Err(JsonRpcError {
@@ -412,5 +504,138 @@ impl McpServer {
                 "text": result_text
             }]
         }))
+    }
+
+    fn tool_search_symbols(&self, args: &serde_json::Value) -> Result<String, JsonRpcError> {
+        info!("McpServer::tool_search_symbols 搜索符号");
+        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+        let kind_filter = args.get("kind").and_then(|v| v.as_str());
+
+        let db = self.open_db()?;
+
+        let symbols = if let Some(kind_str) = kind_filter {
+            let kind = cct_core::indexer::database::str_to_symbol_kind(kind_str);
+            SymbolSearchEngine::search_by_kind(&db, query, kind, 50)
+        } else {
+            SymbolSearchEngine::search(&db, query, 50)
+        }
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("搜索失败: {}", e),
+            data: None,
+        })?;
+
+        if symbols.is_empty() {
+            return Ok(format!("未找到匹配 '{}' 的符号。", query));
+        }
+
+        let mut lines = vec![format!("找到 {} 个匹配 '{}' 的符号:\n", symbols.len(), query)];
+        for s in &symbols {
+            lines.push(format!(
+                "- [{}] `{}` @ {}:{} (ID={})",
+                s.kind, s.qualified_name, s.file_path, s.line, s.id
+            ));
+        }
+
+        Ok(lines.join("\n"))
+    }
+
+    fn tool_query_call_graph(&self, args: &serde_json::Value) -> Result<String, JsonRpcError> {
+        info!("McpServer::tool_query_call_graph 查询调用图");
+        let symbol_name = args.get("symbol_name").and_then(|v| v.as_str()).unwrap_or("");
+        let direction = args.get("direction").and_then(|v| v.as_str()).unwrap_or("both");
+        let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
+
+        let db = self.open_db()?;
+
+        let symbols = SymbolSearchEngine::search(&db, symbol_name, 5).map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("符号搜索失败: {}", e),
+            data: None,
+        })?;
+
+        let target = symbols.first().ok_or_else(|| JsonRpcError {
+            code: -32602,
+            message: format!("未找到符号 '{}'", symbol_name),
+            data: None,
+        })?;
+
+        let mut lines = vec![format!(
+            "## 调用图: `{}` (ID={})\n",
+            target.qualified_name, target.id
+        )];
+
+        if direction == "callers" || direction == "both" {
+            let callers = CallQueryEngine::query_callers(&db, target.id, depth).map_err(|e| {
+                JsonRpcError {
+                    code: -32603,
+                    message: format!("调用者查询失败: {}", e),
+                    data: None,
+                }
+            })?;
+            lines.push(format!("### 调用者（共 {} 处）\n", callers.len()));
+            for r in &callers {
+                let name = db.lookup_symbol_name(r.caller_id).unwrap_or_else(|| format!("#{}", r.caller_id));
+                lines.push(format!("- `{}` @ {}:{}", name, r.call_site_file, r.call_site_line));
+            }
+        }
+
+        if direction == "callees" || direction == "both" {
+            let callees = CallQueryEngine::query_callees(&db, target.id, depth).map_err(|e| {
+                JsonRpcError {
+                    code: -32603,
+                    message: format!("被调用者查询失败: {}", e),
+                    data: None,
+                }
+            })?;
+            lines.push(format!("\n### 被调用者（共 {} 处）\n", callees.len()));
+            for r in &callees {
+                let name = db.lookup_symbol_name(r.callee_id).unwrap_or_else(|| format!("#{}", r.callee_id));
+                lines.push(format!("- `{}` @ {}:{}", name, r.call_site_file, r.call_site_line));
+            }
+        }
+
+        Ok(lines.join("\n"))
+    }
+
+    fn tool_analyze_file(&self, args: &serde_json::Value) -> Result<String, JsonRpcError> {
+        info!("McpServer::tool_analyze_file 分析文件");
+        let file_path = args.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+
+        let db = self.open_db()?;
+
+        let symbols = SymbolSearchEngine::search_by_file(&db, file_path).map_err(|e| {
+            JsonRpcError {
+                code: -32603,
+                message: format!("文件符号查询失败: {}", e),
+                data: None,
+            }
+        })?;
+
+        let includes = IncludeQueryEngine::query_includes(&db, file_path).map_err(|e| {
+            JsonRpcError {
+                code: -32603,
+                message: format!("包含关系查询失败: {}", e),
+                data: None,
+            }
+        })?;
+
+        let mut lines = vec![format!("## 文件分析: `{}`\n", file_path)];
+
+        lines.push(format!("### 符号（共 {} 个）\n", symbols.len()));
+        for s in &symbols {
+            lines.push(format!(
+                "- [{}] `{}` 行 {} (ID={})",
+                s.kind, s.qualified_name, s.line, s.id
+            ));
+        }
+
+        lines.push(format!("\n### 包含的头文件（共 {} 个）\n", includes.len()));
+        for inc in &includes {
+            let kind = if inc.is_system_header { "系统" } else { "项目" };
+            lines.push(format!("- [{}] `{}` 行 {}", kind, inc.target_file, inc.include_line));
+        }
+
+        Ok(lines.join("\n"))
     }
 }
