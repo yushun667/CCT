@@ -14,5 +14,7 @@ tracing.workspace = true
 dirs = "6"
 rusqlite = { version = "0.33", features = ["bundled"] }
 rayon = "1"
+regex = "1"
+serde_yaml = "0.9"
 sha2 = "0.10"
 walkdir = "2"

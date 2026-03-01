@@ -28,6 +28,21 @@ const router = createRouter({
       name: "settings",
       component: () => import("@/views/SettingsView.vue"),
     },
+    {
+      path: "/kernel",
+      name: "kernel",
+      component: () => import("@/views/KernelAnalysisView.vue"),
+    },
+    {
+      path: "/ipc",
+      name: "ipc",
+      component: () => import("@/views/IpcAnalysisView.vue"),
+    },
+    {
+      path: "/custom-rules",
+      name: "custom-rules",
+      component: () => import("@/views/CustomRulesView.vue"),
+    },
   ],
 });
 
