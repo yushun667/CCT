@@ -3,21 +3,30 @@
  * 可视化调用图 — 使用 dagre 树状布局 + SVG 渲染
  *
  * 中心节点为当前选中的函数，上方为调用者（callers），下方为被调用者（callees）。
- * 每个节点显示函数名 + 文件名:行号，点击可跳转到代码。
+ * 每个节点显示函数名 + 文件名:行号。
+ *
+ * 交互：单击选中节点，双击跳转代码，右键菜单查询调用者/被调用者（1层，增量追加）。
  */
-import { ref, computed, watch, onMounted, nextTick } from "vue";
+import { ref, computed, watch, nextTick } from "vue";
 import dagre from "@dagrejs/dagre";
 import type { Symbol as CctSymbol } from "@/api/types";
+
+interface GraphEdgeData {
+  sourceId: number;
+  targetId: number;
+}
 
 const props = defineProps<{
   rootSymbol: CctSymbol;
   callers: CctSymbol[];
   callees: CctSymbol[];
+  extraEdges?: GraphEdgeData[];
 }>();
 
 const emit = defineEmits<{
   (e: "navigate", sym: CctSymbol): void;
-  (e: "expand", sym: CctSymbol): void;
+  (e: "query-callers", sym: CctSymbol): void;
+  (e: "query-callees", sym: CctSymbol): void;
 }>();
 
 interface LayoutNode {
@@ -46,8 +55,12 @@ const svgHeight = ref(600);
 
 const viewBox = computed(() => {
   const pad = 40;
-  if (nodes.value.length === 0) return `0 0 ${svgWidth.value} ${svgHeight.value}`;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  if (nodes.value.length === 0)
+    return `0 0 ${svgWidth.value} ${svgHeight.value}`;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   for (const n of nodes.value) {
     minX = Math.min(minX, n.x - n.width / 2);
     minY = Math.min(minY, n.y - n.height / 2);
@@ -57,13 +70,20 @@ const viewBox = computed(() => {
   return `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`;
 });
 
-// 交互状态
 const pan = ref({ x: 0, y: 0 });
 const scale = ref(1);
 const dragging = ref(false);
 const dragStart = ref({ x: 0, y: 0 });
 const hoveredNode = ref<string | null>(null);
+const selectedNode = ref<string | null>(null);
 const svgRef = ref<SVGSVGElement | null>(null);
+
+const contextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  node: null as LayoutNode | null,
+});
 
 function buildLayout() {
   const g = new dagre.graphlib.Graph();
@@ -76,83 +96,63 @@ function buildLayout() {
   });
   g.setDefaultEdgeLabel(() => ({}));
 
-  const rootId = `root-${props.rootSymbol.id}`;
-  g.setNode(rootId, { width: NODE_W, height: NODE_H });
+  const allSymbols = new Map<number, CctSymbol>();
+  allSymbols.set(props.rootSymbol.id, props.rootSymbol);
+  for (const s of props.callers) allSymbols.set(s.id, s);
+  for (const s of props.callees) allSymbols.set(s.id, s);
 
-  const seen = new Set<number>([props.rootSymbol.id]);
+  const nodeKey = (id: number) => `n-${id}`;
 
-  for (const caller of props.callers) {
-    if (seen.has(caller.id)) continue;
-    seen.add(caller.id);
-    const cid = `caller-${caller.id}`;
-    g.setNode(cid, { width: NODE_W, height: NODE_H });
-    g.setEdge(cid, rootId);
+  for (const [id] of allSymbols) {
+    g.setNode(nodeKey(id), { width: NODE_W, height: NODE_H });
   }
 
+  const edgeSet = new Set<string>();
+  const addEdge = (from: number, to: number) => {
+    const key = `${from}->${to}`;
+    if (edgeSet.has(key)) return;
+    edgeSet.add(key);
+    if (allSymbols.has(from) && allSymbols.has(to)) {
+      g.setEdge(nodeKey(from), nodeKey(to));
+    }
+  };
+
+  for (const caller of props.callers) {
+    addEdge(caller.id, props.rootSymbol.id);
+  }
   for (const callee of props.callees) {
-    if (seen.has(callee.id)) continue;
-    seen.add(callee.id);
-    const cid = `callee-${callee.id}`;
-    g.setNode(cid, { width: NODE_W, height: NODE_H });
-    g.setEdge(rootId, cid);
+    addEdge(props.rootSymbol.id, callee.id);
+  }
+  if (props.extraEdges) {
+    for (const edge of props.extraEdges) {
+      addEdge(edge.sourceId, edge.targetId);
+    }
   }
 
   dagre.layout(g);
 
   const layoutNodes: LayoutNode[] = [];
+  const callerIds = new Set(props.callers.map((s) => s.id));
+  const calleeIds = new Set(props.callees.map((s) => s.id));
 
-  const rootNodeData = g.node(rootId);
-  if (rootNodeData) {
+  for (const [id, sym] of allSymbols) {
+    const nd = g.node(nodeKey(id));
+    if (!nd) continue;
+
+    let kind: "caller" | "root" | "callee" = "callee";
+    if (id === props.rootSymbol.id) kind = "root";
+    else if (callerIds.has(id)) kind = "caller";
+
     layoutNodes.push({
-      id: rootId,
-      sym: props.rootSymbol,
-      x: rootNodeData.x,
-      y: rootNodeData.y,
+      id: nodeKey(id),
+      sym,
+      x: nd.x,
+      y: nd.y,
       width: NODE_W,
       height: NODE_H,
-      isRoot: true,
-      kind: "root",
+      isRoot: id === props.rootSymbol.id,
+      kind,
     });
-  }
-
-  const seenLayout = new Set<number>([props.rootSymbol.id]);
-
-  for (const caller of props.callers) {
-    if (seenLayout.has(caller.id)) continue;
-    seenLayout.add(caller.id);
-    const cid = `caller-${caller.id}`;
-    const nd = g.node(cid);
-    if (nd) {
-      layoutNodes.push({
-        id: cid,
-        sym: caller,
-        x: nd.x,
-        y: nd.y,
-        width: NODE_W,
-        height: NODE_H,
-        isRoot: false,
-        kind: "caller",
-      });
-    }
-  }
-
-  for (const callee of props.callees) {
-    if (seenLayout.has(callee.id)) continue;
-    seenLayout.add(callee.id);
-    const cid = `callee-${callee.id}`;
-    const nd = g.node(cid);
-    if (nd) {
-      layoutNodes.push({
-        id: cid,
-        sym: callee,
-        x: nd.x,
-        y: nd.y,
-        width: NODE_W,
-        height: NODE_H,
-        isRoot: false,
-        kind: "callee",
-      });
-    }
   }
 
   const layoutEdges: LayoutEdge[] = [];
@@ -174,12 +174,8 @@ function buildLayout() {
 function edgePath(pts: { x: number; y: number }[]): string {
   if (pts.length < 2) return "";
   let d = `M ${pts[0].x} ${pts[0].y}`;
-  if (pts.length === 2) {
-    d += ` L ${pts[1].x} ${pts[1].y}`;
-  } else {
-    for (let i = 1; i < pts.length; i++) {
-      d += ` L ${pts[i].x} ${pts[i].y}`;
-    }
+  for (let i = 1; i < pts.length; i++) {
+    d += ` L ${pts[i].x} ${pts[i].y}`;
   }
   return d;
 }
@@ -200,14 +196,58 @@ function shortFile(filePath: string): string {
   return filePath.split("/").pop() ?? filePath;
 }
 
-function handleNodeClick(node: LayoutNode) {
-  emit("navigate", node.sym);
+function isSelected(nodeId: string): boolean {
+  return selectedNode.value === nodeId;
+}
+
+function handleNodeClick(node: LayoutNode, e: MouseEvent) {
+  e.stopPropagation();
+  selectedNode.value = node.id;
+  closeContextMenu();
 }
 
 function handleNodeDblClick(node: LayoutNode) {
-  if (!node.isRoot) {
-    emit("expand", node.sym);
-  }
+  emit("navigate", node.sym);
+}
+
+function handleNodeContextMenu(node: LayoutNode, e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  selectedNode.value = node.id;
+  contextMenu.value = {
+    visible: true,
+    x: e.clientX,
+    y: e.clientY,
+    node,
+  };
+}
+
+function closeContextMenu() {
+  contextMenu.value.visible = false;
+  contextMenu.value.node = null;
+}
+
+function onCtxQueryCallers() {
+  const node = contextMenu.value.node;
+  if (node) emit("query-callers", node.sym);
+  closeContextMenu();
+}
+
+function onCtxQueryCallees() {
+  const node = contextMenu.value.node;
+  if (node) emit("query-callees", node.sym);
+  closeContextMenu();
+}
+
+function onCtxNavigate() {
+  const node = contextMenu.value.node;
+  if (node) emit("navigate", node.sym);
+  closeContextMenu();
+}
+
+function handleBgClick() {
+  selectedNode.value = null;
+  closeContextMenu();
 }
 
 function handleWheel(e: WheelEvent) {
@@ -219,7 +259,10 @@ function handleWheel(e: WheelEvent) {
 function handleMouseDown(e: MouseEvent) {
   if (e.button === 0) {
     dragging.value = true;
-    dragStart.value = { x: e.clientX - pan.value.x, y: e.clientY - pan.value.y };
+    dragStart.value = {
+      x: e.clientX - pan.value.x,
+      y: e.clientY - pan.value.y,
+    };
   }
 }
 
@@ -242,7 +285,7 @@ function resetView() {
 }
 
 watch(
-  () => [props.rootSymbol, props.callers, props.callees],
+  () => [props.rootSymbol, props.callers, props.callees, props.extraEdges],
   () => {
     nextTick(() => buildLayout());
   },
@@ -258,16 +301,21 @@ watch(
     @mousemove="handleMouseMove"
     @mouseup="handleMouseUp"
     @mouseleave="handleMouseUp"
+    @click="handleBgClick"
+    @contextmenu.prevent="closeContextMenu"
   >
-    <!-- 工具栏 -->
     <div class="graph-toolbar">
       <span class="graph-legend">
         <span class="legend-dot" style="background: #52c41a" /> 调用者
         <span class="legend-dot" style="background: #1890ff" /> 当前函数
         <span class="legend-dot" style="background: #fa8c16" /> 被调用
       </span>
-      <span class="graph-hint">滚轮缩放 · 拖拽平移 · 单击跳转 · 双击展开</span>
-      <a-button size="mini" type="text" @click="resetView">重置视图</a-button>
+      <span class="graph-hint">
+        单击选中 · 双击跳转 · 右键查询 · 滚轮缩放 · 拖拽平移
+      </span>
+      <a-button size="mini" type="text" @click.stop="resetView">
+        重置视图
+      </a-button>
     </div>
 
     <svg
@@ -313,23 +361,43 @@ watch(
         :key="node.id"
         class="graph-node"
         :transform="`translate(${node.x - node.width / 2}, ${node.y - node.height / 2})`"
-        @click.stop="handleNodeClick(node)"
+        @click="handleNodeClick(node, $event)"
         @dblclick.stop="handleNodeDblClick(node)"
+        @contextmenu="handleNodeContextMenu(node, $event)"
         @mouseenter="hoveredNode = node.id"
         @mouseleave="hoveredNode = null"
         style="cursor: pointer"
       >
+        <!-- 选中高亮光圈 -->
+        <rect
+          v-if="isSelected(node.id)"
+          :x="-3"
+          :y="-3"
+          :width="node.width + 6"
+          :height="node.height + 6"
+          :rx="8"
+          :ry="8"
+          fill="none"
+          stroke="#fff"
+          stroke-width="2"
+          opacity="0.8"
+        />
         <rect
           :width="node.width"
           :height="node.height"
           :rx="6"
           :ry="6"
           :fill="nodeColor(node.kind)"
-          :stroke="hoveredNode === node.id ? '#fff' : nodeBorderColor(node.kind)"
-          :stroke-width="hoveredNode === node.id ? 2.5 : 1.5"
-          :opacity="hoveredNode === node.id ? 1 : 0.9"
+          :stroke="
+            isSelected(node.id)
+              ? '#fff'
+              : hoveredNode === node.id
+                ? '#ddd'
+                : nodeBorderColor(node.kind)
+          "
+          :stroke-width="isSelected(node.id) ? 2.5 : hoveredNode === node.id ? 2 : 1.5"
+          :opacity="isSelected(node.id) || hoveredNode === node.id ? 1 : 0.9"
         />
-        <!-- 函数名 -->
         <text
           :x="node.width / 2"
           :y="18"
@@ -339,9 +407,12 @@ watch(
           font-weight="600"
           font-family="Menlo, Monaco, monospace"
         >
-          {{ node.sym.name.length > 28 ? node.sym.name.slice(0, 26) + "…" : node.sym.name }}
+          {{
+            node.sym.name.length > 28
+              ? node.sym.name.slice(0, 26) + "\u2026"
+              : node.sym.name
+          }}
         </text>
-        <!-- 文件名:行号 -->
         <text
           :x="node.width / 2"
           :y="36"
@@ -354,7 +425,6 @@ watch(
         </text>
       </g>
 
-      <!-- 空状态 -->
       <text
         v-if="nodes.length === 0"
         x="50%"
@@ -366,6 +436,29 @@ watch(
         暂无调用关系数据
       </text>
     </svg>
+
+    <!-- 右键菜单 -->
+    <Teleport to="body">
+      <div
+        v-if="contextMenu.visible"
+        class="graph-context-menu"
+        :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+      >
+        <div class="ctx-item" @click="onCtxQueryCallers">
+          <icon-import style="color: #52c41a" />
+          查询调用者
+        </div>
+        <div class="ctx-item" @click="onCtxQueryCallees">
+          <icon-export style="color: #fa8c16" />
+          查询被调用者
+        </div>
+        <div class="ctx-divider" />
+        <div class="ctx-item" @click="onCtxNavigate">
+          <icon-code />
+          跳转到代码
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -429,5 +522,39 @@ watch(
 
 .graph-node:hover rect {
   filter: brightness(1.15);
+}
+</style>
+
+<style>
+.graph-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 160px;
+  background: var(--color-bg-2, #fff);
+  border: 1px solid var(--color-border, #e5e6eb);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  color: var(--color-text-1, #1d2129);
+  transition: background 0.15s;
+}
+
+.ctx-item:hover {
+  background: var(--color-fill-2, #f2f3f5);
+}
+
+.ctx-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border, #e5e6eb);
 }
 </style>

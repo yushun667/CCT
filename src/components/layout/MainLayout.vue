@@ -21,13 +21,21 @@ const settings = useSettingsStore();
 const editorStore = useEditorStore();
 const projectStore = useProjectStore();
 
+interface GraphEdgeData {
+  sourceId: number;
+  targetId: number;
+}
+
 const graphVisible = ref(false);
 const graphSymbol = ref<CctSymbol | null>(null);
 const graphResults = ref<{ callers: CctSymbol[]; callees: CctSymbol[] }>({
   callers: [],
   callees: [],
 });
+const graphExtraEdges = ref<GraphEdgeData[]>([]);
 const graphLoading = ref(false);
+
+const graphSymMap = new Map<number, CctSymbol>();
 
 async function findSymbolAtLine(line: number): Promise<CctSymbol | null> {
   const projectId = projectStore.currentProjectId;
@@ -61,6 +69,8 @@ async function loadCallGraph(sym: CctSymbol) {
   graphSymbol.value = sym;
   graphVisible.value = true;
   graphLoading.value = true;
+  graphExtraEdges.value = [];
+  graphSymMap.clear();
 
   const projectId = projectStore.currentProjectId!;
   try {
@@ -69,33 +79,117 @@ async function loadCallGraph(sym: CctSymbol) {
       queryApi.queryCallees(projectId, sym.id, 5),
     ]);
 
-    // 收集所有关联的符号 ID
-    const neededIds = new Set<number>();
-    callerRels.forEach((r) => neededIds.add(r.caller_id));
-    calleeRels.forEach((r) => neededIds.add(r.callee_id));
-
-    // 获取当前文件符号 + 全局搜索来补充
     const fileSymbols = await editorApi.getFileSymbols(
       projectId,
       editorStore.activeFile?.filePath ?? "",
     );
     const globalSymbols = await queryApi.searchSymbols(projectId, "", undefined, 5000);
-    const symMap = new Map<number, CctSymbol>();
-    for (const s of fileSymbols) symMap.set(s.id, s);
-    for (const s of globalSymbols) symMap.set(s.id, s);
+    for (const s of fileSymbols) graphSymMap.set(s.id, s);
+    for (const s of globalSymbols) graphSymMap.set(s.id, s);
+    graphSymMap.set(sym.id, sym);
 
     graphResults.value = {
       callers: callerRels
-        .map((r) => symMap.get(r.caller_id))
+        .map((r) => graphSymMap.get(r.caller_id))
         .filter((s): s is CctSymbol => s != null),
       callees: calleeRels
-        .map((r) => symMap.get(r.callee_id))
+        .map((r) => graphSymMap.get(r.callee_id))
         .filter((s): s is CctSymbol => s != null),
     };
   } catch {
     graphResults.value = { callers: [], callees: [] };
   } finally {
     graphLoading.value = false;
+  }
+}
+
+async function handleQueryNodeCallers(sym: CctSymbol) {
+  const projectId = projectStore.currentProjectId;
+  if (!projectId) return;
+
+  try {
+    const rels = await queryApi.queryCallers(projectId, sym.id, 1);
+    const existingIds = new Set([
+      graphSymbol.value!.id,
+      ...graphResults.value.callers.map((s) => s.id),
+      ...graphResults.value.callees.map((s) => s.id),
+    ]);
+
+    const newEdges: GraphEdgeData[] = [];
+    const newCallers: CctSymbol[] = [];
+
+    for (const r of rels) {
+      const callerSym = graphSymMap.get(r.caller_id);
+      if (!callerSym) continue;
+
+      newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
+
+      if (!existingIds.has(callerSym.id)) {
+        newCallers.push(callerSym);
+        existingIds.add(callerSym.id);
+      }
+    }
+
+    if (newCallers.length > 0) {
+      graphResults.value = {
+        callers: [...graphResults.value.callers, ...newCallers],
+        callees: graphResults.value.callees,
+      };
+    }
+    if (newEdges.length > 0) {
+      graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
+    }
+
+    if (newCallers.length === 0 && newEdges.length === 0) {
+      Message.info("未发现更多调用者");
+    }
+  } catch {
+    Message.error("查询调用者失败");
+  }
+}
+
+async function handleQueryNodeCallees(sym: CctSymbol) {
+  const projectId = projectStore.currentProjectId;
+  if (!projectId) return;
+
+  try {
+    const rels = await queryApi.queryCallees(projectId, sym.id, 1);
+    const existingIds = new Set([
+      graphSymbol.value!.id,
+      ...graphResults.value.callers.map((s) => s.id),
+      ...graphResults.value.callees.map((s) => s.id),
+    ]);
+
+    const newEdges: GraphEdgeData[] = [];
+    const newCallees: CctSymbol[] = [];
+
+    for (const r of rels) {
+      const calleeSym = graphSymMap.get(r.callee_id);
+      if (!calleeSym) continue;
+
+      newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
+
+      if (!existingIds.has(calleeSym.id)) {
+        newCallees.push(calleeSym);
+        existingIds.add(calleeSym.id);
+      }
+    }
+
+    if (newCallees.length > 0) {
+      graphResults.value = {
+        callers: graphResults.value.callers,
+        callees: [...graphResults.value.callees, ...newCallees],
+      };
+    }
+    if (newEdges.length > 0) {
+      graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
+    }
+
+    if (newCallees.length === 0 && newEdges.length === 0) {
+      Message.info("未发现更多被调用者");
+    }
+  } catch {
+    Message.error("查询被调用者失败");
   }
 }
 
@@ -121,9 +215,6 @@ function navigateToSymbol(sym: CctSymbol) {
   editorStore.openFile(sym.file_path, projectId);
 }
 
-async function handleExpandNode(sym: CctSymbol) {
-  await loadCallGraph(sym);
-}
 </script>
 
 <template>
@@ -186,8 +277,10 @@ async function handleExpandNode(sym: CctSymbol) {
                     :root-symbol="graphSymbol"
                     :callers="graphResults.callers"
                     :callees="graphResults.callees"
+                    :extra-edges="graphExtraEdges"
                     @navigate="navigateToSymbol"
-                    @expand="handleExpandNode"
+                    @query-callers="handleQueryNodeCallers"
+                    @query-callees="handleQueryNodeCallees"
                   />
                 </div>
               </a-spin>
