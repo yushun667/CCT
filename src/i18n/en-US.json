@@ -34,7 +34,20 @@
     "parse": "Parse",
     "fullParse": "Full Parse",
     "incrementalParse": "Incremental Parse",
-    "cancelParse": "Cancel Parse"
+    "cancelParse": "Cancel Parse",
+    "createTitle": "New Local Project",
+    "namePlaceholder": "Enter project name",
+    "sourceRootPlaceholder": "Select source directory",
+    "selectDirectory": "Select Directory",
+    "compileDbPlaceholder": "Optional, path to compile_commands.json",
+    "createSuccess": "Project created successfully",
+    "deleteConfirm": "Are you sure you want to delete project \"{name}\"? This cannot be undone.",
+    "deleteSuccess": "Project deleted",
+    "parseStarted": "Parse started",
+    "lastParse": "Last Parse",
+    "never": "Never",
+    "nameRequired": "Project name is required",
+    "sourceRootRequired": "Source root is required"
   },
   "parse": {
     "status": "Parse Status",

@@ -1,3 +1,6 @@
+pub mod parse;
+pub mod project;
+
 use cct_core::config::AppConfig;
 use cct_core::error::CctError;
 use tracing::{debug, info};

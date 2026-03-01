@@ -34,7 +34,20 @@
     "parse": "解析",
     "fullParse": "全量解析",
     "incrementalParse": "增量解析",
-    "cancelParse": "取消解析"
+    "cancelParse": "取消解析",
+    "createTitle": "新建本地项目",
+    "namePlaceholder": "请输入项目名称",
+    "sourceRootPlaceholder": "请选择源码目录",
+    "selectDirectory": "选择目录",
+    "compileDbPlaceholder": "可选，compile_commands.json 路径",
+    "createSuccess": "项目创建成功",
+    "deleteConfirm": "确定要删除项目「{name}」吗？此操作不可撤销。",
+    "deleteSuccess": "项目已删除",
+    "parseStarted": "解析已启动",
+    "lastParse": "上次解析",
+    "never": "从未",
+    "nameRequired": "项目名称不能为空",
+    "sourceRootRequired": "源码目录不能为空"
   },
   "parse": {
     "status": "解析状态",

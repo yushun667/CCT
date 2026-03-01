@@ -12,3 +12,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 dirs = "6"
+rusqlite = { version = "0.33", features = ["bundled"] }
+rayon = "1"
+sha2 = "0.10"
+walkdir = "2"
