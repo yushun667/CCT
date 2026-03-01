@@ -1,10 +1,7 @@
-use std::path::PathBuf;
-
 use serde::Serialize;
 use tracing::{info, debug};
 
 use cct_core::error::CctError;
-use cct_core::indexer::database::IndexDatabase;
 use cct_core::models::symbol::Symbol;
 use cct_core::query::SymbolSearchEngine;
 
@@ -109,19 +106,6 @@ pub fn get_file_symbols(
         "Tauri Command: get_file_symbols"
     );
 
-    let db_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("cct")
-        .join("index")
-        .join(format!("{project_id}.db"));
-
-    if !db_path.exists() {
-        return Err(CctError::Database(format!(
-            "索引数据库不存在: {}",
-            db_path.display()
-        )));
-    }
-
-    let db = IndexDatabase::open(&db_path)?;
+    let db = super::open_project_index_db(&project_id)?;
     SymbolSearchEngine::search_by_file(&db, &file_path)
 }

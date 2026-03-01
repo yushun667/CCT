@@ -445,13 +445,19 @@ fn open_project_db(project_id: &str) -> Result<IndexDatabase, CctError> {
     IndexDatabase::open(&db_path)
 }
 
-/// 计算项目索引数据库的路径
+/// 计算项目索引数据库的路径 — 保存在 `{source_root}/.cct/index.db`
 pub fn index_db_path(project_id: &str) -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| Path::new(".").to_path_buf())
-        .join("cct")
-        .join("index")
-        .join(format!("{}.db", project_id))
+    match crate::commands::project_db_path(project_id) {
+        Ok(p) => p,
+        Err(_) => {
+            // 回退路径（项目不存在时不应到达这里）
+            dirs::data_dir()
+                .unwrap_or_else(|| Path::new(".").to_path_buf())
+                .join("cct")
+                .join("index")
+                .join(format!("{}.db", project_id))
+        }
+    }
 }
 
 fn extract_i64(params: &serde_json::Value, key: &str) -> Result<i64, CctError> {

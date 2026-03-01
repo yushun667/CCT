@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -16,15 +15,6 @@ use crate::services::project_service::{parse_project_id, ProjectService};
 
 /// 全局取消标志 — 用于中断正在进行的解析任务
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
-
-/// 获取项目对应的索引数据库路径
-fn index_db_path(project_id: &str) -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("cct")
-        .join("index")
-        .join(format!("{}.db", project_id))
-}
 
 /// 启动全量解析
 ///
@@ -60,7 +50,7 @@ pub async fn start_full_parse(
     }
     let excluded_dirs = project.excluded_dirs.clone();
     let pid = project_id.clone();
-    let db_path = index_db_path(&project_id);
+    let db_path = super::project_db_path_from_root(&source_root)?;
 
     app.emit("parse-progress", serde_json::json!({
         "project_id": project_id,
@@ -317,7 +307,7 @@ pub fn get_parse_status(project_id: String) -> Result<String, CctError> {
 pub fn get_parse_statistics(project_id: String) -> Result<ParseStatistics, CctError> {
     info!(project_id = %project_id, "Tauri Command: get_parse_statistics");
 
-    let db_path = index_db_path(&project_id);
+    let db_path = super::project_db_path(&project_id)?;
 
     if !db_path.exists() {
         info!(path = %db_path.display(), "索引数据库不存在，返回空统计");
@@ -347,7 +337,7 @@ pub async fn start_incremental_parse(
 
     let source_root = project.source_root.clone();
     let pid = project_id.clone();
-    let db_path = index_db_path(&project_id);
+    let db_path = super::project_db_path_from_root(&source_root)?;
 
     tokio::task::spawn_blocking(move || {
         info!("增量解析后台线程启动");
@@ -434,7 +424,7 @@ pub async fn start_incremental_parse(
 pub fn get_parse_errors(project_id: String) -> Result<Vec<serde_json::Value>, CctError> {
     info!(project_id = %project_id, "Tauri Command: get_parse_errors");
 
-    let db_path = index_db_path(&project_id);
+    let db_path = super::project_db_path(&project_id)?;
     if !db_path.exists() {
         return Ok(Vec::new());
     }

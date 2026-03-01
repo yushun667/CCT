@@ -10,20 +10,8 @@ use cct_core::error::CctError;
 use cct_core::indexer::database::IndexDatabase;
 use cct_core::models::symbol::Symbol;
 
-/// 打开项目对应的索引数据库
 fn open_project_db(project_id: &str) -> Result<IndexDatabase, CctError> {
-    let db_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("cct")
-        .join("index")
-        .join(format!("{project_id}.db"));
-    if !db_path.exists() {
-        return Err(CctError::Database(format!(
-            "索引数据库不存在: {}",
-            db_path.display()
-        )));
-    }
-    IndexDatabase::open(&db_path)
+    super::open_project_index_db(project_id)
 }
 
 /// 列出项目中所有识别到的 Linux 系统调用

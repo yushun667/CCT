@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use tracing::info;
 
 use cct_core::error::CctError;
@@ -12,22 +10,7 @@ use cct_core::query::{
 
 /// 打开项目对应的索引数据库
 fn open_project_db(project_id: &str) -> Result<IndexDatabase, CctError> {
-    let db_path = get_db_path(project_id);
-    if !db_path.exists() {
-        return Err(CctError::Database(format!(
-            "索引数据库不存在: {}",
-            db_path.display()
-        )));
-    }
-    IndexDatabase::open(&db_path)
-}
-
-fn get_db_path(project_id: &str) -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("cct")
-        .join("index")
-        .join(format!("{project_id}.db"))
+    super::open_project_index_db(project_id)
 }
 
 /// 按 ID 列表批量获取符号
