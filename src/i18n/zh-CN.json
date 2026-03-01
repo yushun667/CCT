@@ -125,7 +125,30 @@
     "editor": "编辑器",
     "parse": "解析",
     "ai": "AI",
-    "about": "关于"
+    "about": "关于",
+    "shortcuts": "快捷键",
+    "fontFamily": "字体",
+    "tabSize": "Tab 宽度",
+    "lineNumbers": "显示行号",
+    "maxThreads": "最大线程数",
+    "fileExtensions": "文件扩展名",
+    "fileExtensionsPlaceholder": "逗号分隔，如 c, cpp, h",
+    "aiPlaceholder": "AI 配置（M6 阶段实现）",
+    "aboutAppName": "应用名称",
+    "aboutVersion": "版本",
+    "aboutFramework": "框架",
+    "aboutEngine": "解析引擎"
+  },
+  "shortcuts": {
+    "shortcut": "快捷键",
+    "action": "功能",
+    "category": "分类",
+    "catGeneral": "通用",
+    "catLayout": "布局",
+    "search": "打开搜索",
+    "toggleSidebar": "切换侧边栏",
+    "toggleBottomPanel": "切换底部面板",
+    "toggleAiPanel": "切换 AI 面板"
   },
   "status": {
     "ready": "就绪",

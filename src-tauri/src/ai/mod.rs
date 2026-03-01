@@ -6,4 +6,5 @@
 pub mod context;
 pub mod conversation;
 pub mod llm_client;
+pub mod mcp;
 pub mod skills;

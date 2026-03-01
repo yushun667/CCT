@@ -1,4 +1,5 @@
 pub mod clang_bridge;
+pub mod incremental;
 pub mod scheduler;
 
 use std::path::Path;

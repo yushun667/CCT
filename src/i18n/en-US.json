@@ -125,7 +125,30 @@
     "editor": "Editor",
     "parse": "Parse",
     "ai": "AI",
-    "about": "About"
+    "about": "About",
+    "shortcuts": "Shortcuts",
+    "fontFamily": "Font Family",
+    "tabSize": "Tab Size",
+    "lineNumbers": "Line Numbers",
+    "maxThreads": "Max Threads",
+    "fileExtensions": "File Extensions",
+    "fileExtensionsPlaceholder": "Comma separated, e.g. c, cpp, h",
+    "aiPlaceholder": "AI configuration (M6 phase)",
+    "aboutAppName": "Application",
+    "aboutVersion": "Version",
+    "aboutFramework": "Framework",
+    "aboutEngine": "Parse Engine"
+  },
+  "shortcuts": {
+    "shortcut": "Shortcut",
+    "action": "Action",
+    "category": "Category",
+    "catGeneral": "General",
+    "catLayout": "Layout",
+    "search": "Open Search",
+    "toggleSidebar": "Toggle Sidebar",
+    "toggleBottomPanel": "Toggle Bottom Panel",
+    "toggleAiPanel": "Toggle AI Panel"
   },
   "status": {
     "ready": "Ready",
