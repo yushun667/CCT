@@ -27,6 +27,19 @@ pub fn run() {
             commands::parse::cancel_parse,
             commands::parse::get_parse_status,
             commands::parse::get_parse_statistics,
+            commands::remote::test_ssh_connection,
+            commands::remote::browse_remote_dir,
+            commands::remote::deploy_agent,
+            commands::remote::get_remote_status,
+            commands::query::search_symbols,
+            commands::query::query_callers,
+            commands::query::query_callees,
+            commands::query::query_references,
+            commands::query::query_call_path,
+            commands::editor::read_file_content,
+            commands::editor::get_file_symbols,
+            commands::graph::get_call_graph,
+            commands::graph::get_file_dependency_graph,
         ])
         .run(tauri::generate_context!())
         .expect("CCT 桌面端启动失败");

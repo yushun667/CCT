@@ -448,7 +448,7 @@ fn map_db_err(e: rusqlite::Error) -> CctError {
     CctError::Database(e.to_string())
 }
 
-fn symbol_kind_to_str(kind: &SymbolKind) -> &'static str {
+pub fn symbol_kind_to_str(kind: &SymbolKind) -> &'static str {
     match kind {
         SymbolKind::Function => "function",
         SymbolKind::Variable => "variable",
@@ -603,6 +603,111 @@ fn ref_kind_to_str(kind: &RefKind) -> &'static str {
         RefKind::Call => "call",
         RefKind::Type => "type",
     }
+}
+
+impl IndexDatabase {
+    /// 暴露只读连接引用，供查询模块执行查询
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    /// 查询符号名称
+    pub fn lookup_symbol_name(&self, id: i64) -> Option<String> {
+        self.conn
+            .query_row(
+                "SELECT qualified_name FROM symbols WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    /// 查询符号类型
+    pub fn lookup_symbol_kind(&self, id: i64) -> Option<SymbolKind> {
+        self.conn
+            .query_row(
+                "SELECT kind FROM symbols WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .map(|s| str_to_symbol_kind(&s))
+    }
+
+    /// 查询符号所在文件
+    pub fn lookup_symbol_file(&self, id: i64) -> Option<String> {
+        self.conn
+            .query_row(
+                "SELECT file_path FROM symbols WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    /// 查询符号所在行
+    pub fn lookup_symbol_line(&self, id: i64) -> Option<u32> {
+        self.conn
+            .query_row(
+                "SELECT line FROM symbols WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+}
+
+// ── 公共辅助函数 — 供 query 模块复用 ──────────────────────────────────
+
+pub fn str_to_symbol_kind(s: &str) -> SymbolKind {
+    match s {
+        "function" => SymbolKind::Function,
+        "variable" => SymbolKind::Variable,
+        "type" => SymbolKind::Type,
+        "macro" => SymbolKind::Macro,
+        _ => SymbolKind::Function,
+    }
+}
+
+pub fn str_to_access(s: &str) -> Access {
+    match s {
+        "public" => Access::Public,
+        "protected" => Access::Protected,
+        "private" => Access::Private,
+        _ => Access::Public,
+    }
+}
+
+pub fn str_to_ref_kind(s: &str) -> RefKind {
+    match s {
+        "read" => RefKind::Read,
+        "write" => RefKind::Write,
+        "address" => RefKind::Address,
+        "call" => RefKind::Call,
+        "type" => RefKind::Type,
+        _ => RefKind::Read,
+    }
+}
+
+/// 从数据库行映射为 Symbol 结构体（列顺序需与 SELECT 一致）
+pub fn row_to_symbol(row: &rusqlite::Row) -> Result<Symbol, rusqlite::Error> {
+    Ok(Symbol {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        qualified_name: row.get(2)?,
+        kind: str_to_symbol_kind(&row.get::<_, String>(3)?),
+        sub_kind: row.get(4)?,
+        file_path: row.get(5)?,
+        line: row.get(6)?,
+        column: row.get(7)?,
+        end_line: row.get(8)?,
+        is_definition: row.get(9)?,
+        return_type: row.get(10)?,
+        parameters: row.get(11)?,
+        access: row.get::<_, Option<String>>(12)?.map(|s| str_to_access(&s)),
+        attributes: row.get(13)?,
+        project_id: row.get(14)?,
+    })
 }
 
 /// rusqlite `query_row` 辅助 — 将 QueryReturnedNoRows 映射为 None

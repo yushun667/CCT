@@ -14,6 +14,16 @@ const router = createRouter({
       component: () => import("@/views/ProjectView.vue"),
     },
     {
+      path: "/editor",
+      name: "editor",
+      component: () => import("@/views/EditorView.vue"),
+    },
+    {
+      path: "/graph",
+      name: "graph",
+      component: () => import("@/views/GraphView.vue"),
+    },
+    {
       path: "/settings",
       name: "settings",
       component: () => import("@/views/SettingsView.vue"),

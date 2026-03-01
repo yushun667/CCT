@@ -1,5 +1,9 @@
+pub mod editor;
+pub mod graph;
 pub mod parse;
 pub mod project;
+pub mod query;
+pub mod remote;
 
 use cct_core::config::AppConfig;
 use cct_core::error::CctError;

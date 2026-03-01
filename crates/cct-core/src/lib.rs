@@ -3,3 +3,4 @@ pub mod error;
 pub mod indexer;
 pub mod models;
 pub mod parser;
+pub mod query;
