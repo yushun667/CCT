@@ -23,6 +23,9 @@ src-tauri/gen/
 # Third-party precompiled libraries
 third_party/
 
+# Project index database
+.cct/
+
 # Environment
 .env
 .env.*

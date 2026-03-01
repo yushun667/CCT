@@ -52,7 +52,7 @@ const progressText = computed(() => {
         <span class="parse-count">{{ progressText }}</span>
         <span class="parse-file">{{ progressFile }}</span>
         <a-progress
-          :percent="Math.min(100, Math.max(0, projectStore.parseProgress?.percentage ?? 0))"
+          :percent="projectStore.parseProgress?.percentage ?? 0"
           :show-text="false"
           size="small"
           :status="projectStore.parseProgress?.phase === 'indexing' ? 'warning' : 'normal'"

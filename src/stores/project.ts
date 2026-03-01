@@ -138,11 +138,15 @@ export const useProjectStore = defineStore("project", () => {
 
   async function listenParseProgress() {
     await listen<ParseProgress>("parse-progress", (event) => {
-      parseProgress.value = event.payload;
+      const p = { ...event.payload };
+      // 防御性夹紧：后端浮点误差或并发竞态可能导致百分比溢出
+      const raw = Number(p.percentage);
+      p.percentage = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0;
+      parseProgress.value = p;
 
-      if (event.payload.phase === "parsing") {
+      if (p.phase === "parsing") {
         parseStatus.value = "running";
-      } else if (event.payload.phase === "indexing") {
+      } else if (p.phase === "indexing") {
         parseStatus.value = "indexing";
       }
     });
