@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 use tracing::{debug, error, info, warn};
+
+/// 单个文件解析的超时时间
+const PER_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 
 use crate::error::CctError;
 use crate::indexer::database::IndexDatabase;
@@ -56,6 +59,7 @@ impl ParseScheduler {
     /// - `source_root`: 源码根目录
     /// - `compile_db`: 可选的编译数据库路径
     /// - `db_path`: 索引数据库路径；提供后将解析结果持久化到 SQLite
+    /// - `excluded_dirs`: 用户自定义的排除目录名列表
     /// - `progress_callback`: 进度回调，每完成一个文件调用一次
     ///
     /// # 返回
@@ -65,6 +69,7 @@ impl ParseScheduler {
         source_root: &Path,
         compile_db: Option<&Path>,
         db_path: Option<&Path>,
+        excluded_dirs: &[String],
         progress_callback: F,
     ) -> Result<ParseStatistics, CctError>
     where
@@ -82,7 +87,7 @@ impl ParseScheduler {
             ));
         }
 
-        let files = file_scanner::scan_source_files(source_root, SOURCE_EXTENSIONS);
+        let files = file_scanner::scan_source_files(source_root, SOURCE_EXTENSIONS, excluded_dirs);
         if files.is_empty() {
             return Err(CctError::ParseNoSource);
         }
@@ -94,6 +99,7 @@ impl ParseScheduler {
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.thread_count)
+            .stack_size(64 * 1024 * 1024) // 64 MB — Clang 递归 AST 求值需要大栈
             .build()
             .map_err(|e| CctError::Internal(format!("线程池创建失败: {e}")))?;
 
@@ -118,7 +124,17 @@ impl ParseScheduler {
                 .par_iter()
                 .map(|file_path| {
                     debug!(file = %file_path.display(), "开始解析文件");
+                    let file_start = Instant::now();
                     let result = parser.parse_file(file_path, &[]);
+                    let file_elapsed = file_start.elapsed();
+                    if file_elapsed > PER_FILE_TIMEOUT {
+                        warn!(
+                            file = %file_path.display(),
+                            elapsed_ms = file_elapsed.as_millis(),
+                            "文件解析超时（超过 {}s）",
+                            PER_FILE_TIMEOUT.as_secs()
+                        );
+                    }
 
                     match &result {
                         Ok(pr) => {
@@ -169,11 +185,15 @@ impl ParseScheduler {
                             let rate = done as f64 / elapsed.max(0.001);
                             let remaining = (total_files - done) as f64 / rate.max(0.001);
 
+                            let pct = if total_files > 0 {
+                                ((done as f32 / total_files as f32) * 100.0).clamp(0.0, 100.0)
+                            } else { 0.0 };
                             callback(ParseProgress {
+                                phase: "parsing".to_string(),
                                 total_files,
                                 parsed_files: done,
                                 failed_files: failed_count.load(Ordering::Relaxed),
-                                percentage: (done as f32 / total_files as f32) * 100.0,
+                                percentage: pct,
                                 current_file: file_path.display().to_string(),
                                 symbols_found: symbol_count.load(Ordering::Relaxed),
                                 relations_found: relation_count.load(Ordering::Relaxed),
@@ -190,12 +210,16 @@ impl ParseScheduler {
                             failed_count.fetch_add(1, Ordering::Relaxed);
                             let done = parsed_count.fetch_add(1, Ordering::Relaxed) + 1;
                             let elapsed = start.elapsed().as_secs_f64();
+                            let pct = if total_files > 0 {
+                                ((done as f32 / total_files as f32) * 100.0).clamp(0.0, 100.0)
+                            } else { 0.0 };
 
                             callback(ParseProgress {
+                                phase: "parsing".to_string(),
                                 total_files,
                                 parsed_files: done,
                                 failed_files: failed_count.load(Ordering::Relaxed),
-                                percentage: (done as f32 / total_files as f32) * 100.0,
+                                percentage: pct,
                                 current_file: file_path.display().to_string(),
                                 symbols_found: symbol_count.load(Ordering::Relaxed),
                                 relations_found: relation_count.load(Ordering::Relaxed),
@@ -222,8 +246,81 @@ impl ParseScheduler {
             "解析任务完成"
         );
 
+        // ── 跨文件调用关系解析 ────────────────────────────────────
+        // 构建全局 qualified_name → symbol_id 映射表，
+        // 将单文件阶段无法解析的调用关系（被调用者在其他文件）补全。
+        let global_resolve_start = Instant::now();
+        let mut global_name_to_id: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+
+        for (_path, result) in &results {
+            if let Ok(pr) = result {
+                for sym in &pr.symbols {
+                    global_name_to_id
+                        .entry(sym.qualified_name.clone())
+                        .or_insert(sym.id);
+                }
+            }
+        }
+
+        let mut resolved_cross_file_calls: Vec<crate::models::relation::CallRelation> =
+            Vec::new();
+        let mut unresolved_count = 0u64;
+
+        for (_path, result) in &results {
+            if let Ok(pr) = result {
+                for uc in &pr.unresolved_calls {
+                    let caller_id = global_name_to_id.get(&uc.caller_name).copied();
+                    let callee_id = global_name_to_id.get(&uc.callee_name).copied();
+
+                    if let (Some(crid), Some(ceid)) = (caller_id, callee_id) {
+                        use std::sync::atomic::AtomicI64;
+                        static CROSS_ID: AtomicI64 = AtomicI64::new(1_000_000_000);
+                        resolved_cross_file_calls.push(
+                            crate::models::relation::CallRelation {
+                                id: CROSS_ID.fetch_add(1, Ordering::Relaxed),
+                                caller_id: crid,
+                                callee_id: ceid,
+                                call_site_file: uc.file_path.clone(),
+                                call_site_line: uc.line,
+                                call_site_column: uc.column,
+                                is_virtual_dispatch: uc.is_virtual,
+                                is_indirect: uc.is_indirect,
+                            },
+                        );
+                    } else {
+                        unresolved_count += 1;
+                    }
+                }
+            }
+        }
+
+        stats_call_count.fetch_add(resolved_cross_file_calls.len() as u64, Ordering::Relaxed);
+        relation_count.fetch_add(resolved_cross_file_calls.len() as u64, Ordering::Relaxed);
+
+        info!(
+            resolved = resolved_cross_file_calls.len(),
+            still_unresolved = unresolved_count,
+            elapsed_ms = global_resolve_start.elapsed().as_millis(),
+            "跨文件调用关系解析完成"
+        );
+
         if let Some(db_p) = db_path {
             info!(db = %db_p.display(), "开始将解析结果写入索引数据库");
+
+            progress_callback(ParseProgress {
+                phase: "indexing".to_string(),
+                total_files,
+                parsed_files: parsed,
+                failed_files: failed,
+                percentage: 0.0,
+                current_file: "正在写入索引数据库...".to_string(),
+                symbols_found: symbol_count.load(Ordering::Relaxed),
+                relations_found: relation_count.load(Ordering::Relaxed),
+                elapsed_seconds: elapsed,
+                estimated_remaining: 0.0,
+            });
+
             if let Some(parent) = db_p.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -235,6 +332,8 @@ impl ParseScheduler {
                         let write_start = Instant::now();
                         let mut total_written_symbols = 0u64;
                         let mut total_written_relations = 0u64;
+                        let total_results = results.len() as u64;
+                        let mut written_count = 0u64;
 
                         for (file_path, result) in &results {
                             let path_str = file_path.display().to_string();
@@ -295,6 +394,25 @@ impl ParseScheduler {
                                     if let Err(e) = db.upsert_file_info(&fi) {
                                         warn!(file = %path_str, error = %e, "更新文件信息失败");
                                     }
+
+                                    written_count += 1;
+                                    if written_count % 50 == 0 || written_count == total_results {
+                                        let idx_pct = if total_results > 0 {
+                                            ((written_count as f32 / total_results as f32) * 100.0).clamp(0.0, 100.0)
+                                        } else { 0.0 };
+                                        progress_callback(ParseProgress {
+                                            phase: "indexing".to_string(),
+                                            total_files: total_results,
+                                            parsed_files: written_count,
+                                            failed_files: 0,
+                                            percentage: idx_pct,
+                                            current_file: path_str.clone(),
+                                            symbols_found: total_written_symbols,
+                                            relations_found: total_written_relations,
+                                            elapsed_seconds: write_start.elapsed().as_secs_f64(),
+                                            estimated_remaining: 0.0,
+                                        });
+                                    }
                                 }
                                 Err(e) => {
                                     let fi = FileInfo {
@@ -311,6 +429,19 @@ impl ParseScheduler {
                                     };
                                     let _ = db.upsert_file_info(&fi);
                                 }
+                            }
+                        }
+
+                        // 写入跨文件调用关系
+                        if !resolved_cross_file_calls.is_empty() {
+                            if let Err(e) = db.insert_call_relations(&resolved_cross_file_calls) {
+                                warn!(error = %e, "写入跨文件调用关系失败");
+                            } else {
+                                total_written_relations += resolved_cross_file_calls.len() as u64;
+                                info!(
+                                    count = resolved_cross_file_calls.len(),
+                                    "跨文件调用关系已写入数据库"
+                                );
                             }
                         }
 

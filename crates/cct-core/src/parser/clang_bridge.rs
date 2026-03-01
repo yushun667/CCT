@@ -175,7 +175,9 @@ fn parse_file_impl(
         s
     };
 
-    if result != 0 {
+    if result == -2 {
+        warn!(file = %file_str, "Clang 解析时触发了信号（SIGTRAP/SIGABRT），文件已跳过");
+    } else if result != 0 {
         warn!(file = %file_str, code = result, "Clang 解析报告了错误（可能有诊断信息），但仍尝试提取结果");
     }
 
@@ -324,24 +326,39 @@ fn convert_bridge_result(parsed: BridgeParseResult, _file_path: &str) -> ParseRe
         });
     }
 
-    let call_relations: Vec<CallRelation> = parsed
-        .calls
-        .iter()
-        .filter_map(|bc| {
-            let caller_id = *symbol_name_to_id.get(&bc.caller)?;
-            let callee_id = *symbol_name_to_id.get(&bc.callee)?;
-            Some(CallRelation {
-                id: ID_COUNTER.fetch_add(1, Ordering::Relaxed),
-                caller_id,
-                callee_id,
-                call_site_file: bc.file.clone(),
-                call_site_line: bc.line,
-                call_site_column: bc.column,
-                is_virtual_dispatch: bc.is_virtual,
-                is_indirect: bc.is_indirect,
-            })
-        })
-        .collect();
+    let mut call_relations = Vec::new();
+    let mut unresolved_calls = Vec::new();
+
+    for bc in &parsed.calls {
+        let caller_id = symbol_name_to_id.get(&bc.caller).copied();
+        let callee_id = symbol_name_to_id.get(&bc.callee).copied();
+
+        match (caller_id, callee_id) {
+            (Some(crid), Some(ceid)) => {
+                call_relations.push(CallRelation {
+                    id: ID_COUNTER.fetch_add(1, Ordering::Relaxed),
+                    caller_id: crid,
+                    callee_id: ceid,
+                    call_site_file: bc.file.clone(),
+                    call_site_line: bc.line,
+                    call_site_column: bc.column,
+                    is_virtual_dispatch: bc.is_virtual,
+                    is_indirect: bc.is_indirect,
+                });
+            }
+            _ => {
+                unresolved_calls.push(super::UnresolvedCall {
+                    caller_name: bc.caller.clone(),
+                    callee_name: bc.callee.clone(),
+                    file_path: bc.file.clone(),
+                    line: bc.line,
+                    column: bc.column,
+                    is_virtual: bc.is_virtual,
+                    is_indirect: bc.is_indirect,
+                });
+            }
+        }
+    }
 
     let include_relations: Vec<IncludeRelation> = parsed
         .includes
@@ -405,6 +422,7 @@ fn convert_bridge_result(parsed: BridgeParseResult, _file_path: &str) -> ParseRe
     ParseResult {
         symbols,
         call_relations,
+        unresolved_calls,
         include_relations,
         reference_relations,
         inheritance_relations,
