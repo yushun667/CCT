@@ -309,10 +309,59 @@ fn convert_bridge_result(parsed: BridgeParseResult, _file_path: &str) -> ParseRe
     use std::sync::atomic::{AtomicI64, Ordering};
     static ID_COUNTER: AtomicI64 = AtomicI64::new(1);
 
-    let mut symbols = Vec::with_capacity(parsed.symbols.len());
+    // 统一符号解析（Unified Symbol Resolution）：
+    // 以 (qualified_name, file_path, line) 为键去重，
+    // 同一逻辑符号只保留一条记录，优先保留 is_definition=true 的版本。
+    let mut dedup_map: std::collections::HashMap<(String, String, u32), usize> =
+        std::collections::HashMap::new();
+    let mut symbols: Vec<Symbol> = Vec::with_capacity(parsed.symbols.len());
     let mut symbol_name_to_id = std::collections::HashMap::new();
 
     for bs in &parsed.symbols {
+        let dedup_key = (
+            bs.qualified_name.clone(),
+            bs.file_path.clone(),
+            bs.line,
+        );
+
+        if let Some(&existing_idx) = dedup_map.get(&dedup_key) {
+            // 若新记录是定义而旧记录不是，用新记录替换
+            if bs.is_definition && !symbols[existing_idx].is_definition {
+                let id = symbols[existing_idx].id;
+                let kind = match bs.kind.as_str() {
+                    "function" => SymbolKind::Function,
+                    "variable" => SymbolKind::Variable,
+                    "type" => SymbolKind::Type,
+                    "macro" => SymbolKind::Macro,
+                    _ => SymbolKind::Function,
+                };
+                let access = bs.access.as_deref().map(|a| match a {
+                    "public" => Access::Public,
+                    "protected" => Access::Protected,
+                    "private" => Access::Private,
+                    _ => Access::Public,
+                });
+                symbols[existing_idx] = Symbol {
+                    id,
+                    name: bs.name.clone(),
+                    qualified_name: bs.qualified_name.clone(),
+                    kind,
+                    sub_kind: bs.sub_kind.clone(),
+                    file_path: bs.file_path.clone(),
+                    line: bs.line,
+                    column: bs.column,
+                    end_line: bs.end_line,
+                    is_definition: true,
+                    return_type: bs.return_type.clone(),
+                    parameters: bs.parameters.as_ref().map(|p| p.to_string()),
+                    access,
+                    attributes: bs.attributes.as_ref().map(|a| a.to_string()),
+                    project_id: String::new(),
+                };
+            }
+            continue;
+        }
+
         let id = ID_COUNTER.fetch_add(1, Ordering::Relaxed);
         symbol_name_to_id.insert(bs.qualified_name.clone(), id);
 
@@ -331,6 +380,9 @@ fn convert_bridge_result(parsed: BridgeParseResult, _file_path: &str) -> ParseRe
             _ => Access::Public,
         });
 
+        let idx = symbols.len();
+        dedup_map.insert(dedup_key, idx);
+
         symbols.push(Symbol {
             id,
             name: bs.name.clone(),
@@ -346,7 +398,7 @@ fn convert_bridge_result(parsed: BridgeParseResult, _file_path: &str) -> ParseRe
             parameters: bs.parameters.as_ref().map(|p| p.to_string()),
             access,
             attributes: bs.attributes.as_ref().map(|a| a.to_string()),
-            project_id: String::new(), // filled by caller
+            project_id: String::new(),
         });
     }
 

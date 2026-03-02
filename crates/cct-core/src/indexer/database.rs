@@ -69,7 +69,8 @@ impl IndexDatabase {
                 parameters      TEXT,
                 access          TEXT,
                 attributes      TEXT,
-                project_id      TEXT NOT NULL
+                project_id      TEXT NOT NULL,
+                UNIQUE(qualified_name, file_path, line)
             );
 
             CREATE INDEX IF NOT EXISTS idx_symbols_name      ON symbols(name);
@@ -153,7 +154,7 @@ impl IndexDatabase {
         {
             let mut stmt = tx
                 .prepare_cached(
-                    "INSERT INTO symbols (
+                    "INSERT OR REPLACE INTO symbols (
                         id, name, qualified_name, kind, sub_kind, file_path,
                         line, column, end_line, is_definition, return_type,
                         parameters, access, attributes, project_id

@@ -21,6 +21,9 @@ pub struct SymbolSearchEngine;
 impl SymbolSearchEngine {
     /// 模糊搜索符号（名称子串匹配）
     ///
+    /// 使用统一符号解析（Unified Symbol Resolution）：对相同 qualified_name
+    /// 的多条记录只保留一条，优先保留 is_definition=true 的版本。
+    ///
     /// # 参数
     /// - `db`: 索引数据库引用
     /// - `query`: 搜索关键词
@@ -34,7 +37,13 @@ impl SymbolSearchEngine {
         let mut stmt = conn
             .prepare_cached(&format!(
                 "SELECT {SYMBOL_COLUMNS} FROM symbols \
-                 WHERE name LIKE ?1 OR qualified_name LIKE ?1 \
+                 WHERE (name LIKE ?1 OR qualified_name LIKE ?1) \
+                   AND id IN ( \
+                     SELECT id FROM symbols AS s2 \
+                     WHERE s2.qualified_name = symbols.qualified_name \
+                     ORDER BY s2.is_definition DESC, s2.id ASC \
+                     LIMIT 1 \
+                   ) \
                  ORDER BY \
                    CASE WHEN name = ?2 THEN 0 \
                         WHEN name LIKE ?3 THEN 1 \
@@ -82,6 +91,12 @@ impl SymbolSearchEngine {
             .prepare_cached(&format!(
                 "SELECT {SYMBOL_COLUMNS} FROM symbols \
                  WHERE (name LIKE ?1 OR qualified_name LIKE ?1) AND kind = ?2 \
+                   AND id IN ( \
+                     SELECT id FROM symbols AS s2 \
+                     WHERE s2.qualified_name = symbols.qualified_name \
+                     ORDER BY s2.is_definition DESC, s2.id ASC \
+                     LIMIT 1 \
+                   ) \
                  ORDER BY length(name) \
                  LIMIT ?3"
             ))

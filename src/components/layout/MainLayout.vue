@@ -106,6 +106,22 @@ const graphLoading = ref(false);
 
 const graphSymMap = new Map<number, CctSymbol>();
 
+/**
+ * 统一符号去重：按 qualified_name 合并，优先保留 is_definition=true 的版本。
+ * 确保同一逻辑符号在调用图中只显示一个节点。
+ */
+function deduplicateSymbols(syms: CctSymbol[]): CctSymbol[] {
+  const seen = new Map<string, CctSymbol>();
+  for (const s of syms) {
+    const key = s.qualified_name;
+    const existing = seen.get(key);
+    if (!existing || (s.is_definition && !existing.is_definition)) {
+      seen.set(key, s);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 async function findSymbolAtLine(line: number): Promise<CctSymbol | null> {
   const projectId = projectStore.currentProjectId;
   const file = editorStore.activeFile;
@@ -132,19 +148,6 @@ async function findSymbolAtLine(line: number): Promise<CctSymbol | null> {
   } catch {
     return null;
   }
-}
-
-/** 按 qualified_name 去重，同名符号优先保留定义（is_definition=true） */
-function deduplicateSymbols(symbols: CctSymbol[]): CctSymbol[] {
-  const map = new Map<string, CctSymbol>();
-  for (const s of symbols) {
-    const key = s.qualified_name;
-    const existing = map.get(key);
-    if (!existing || (!existing.is_definition && s.is_definition)) {
-      map.set(key, s);
-    }
-  }
-  return Array.from(map.values());
 }
 
 async function loadCallGraph(sym: CctSymbol) {
@@ -244,10 +247,9 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
       }
     }
 
-    const dedupedCallers = deduplicateSymbols(newCallers);
-    if (dedupedCallers.length > 0) {
+    if (newCallers.length > 0) {
       graphResults.value = {
-        callers: [...graphResults.value.callers, ...dedupedCallers],
+        callers: [...graphResults.value.callers, ...newCallers],
         callees: graphResults.value.callees,
       };
     }
@@ -255,7 +257,7 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
       graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
     }
 
-    if (dedupedCallers.length === 0 && newEdges.length === 0) {
+    if (newCallers.length === 0 && newEdges.length === 0) {
       Message.info("未发现更多调用者");
     }
   } catch {
@@ -305,18 +307,17 @@ async function handleQueryNodeCallees(sym: CctSymbol) {
       }
     }
 
-    const dedupedCallees = deduplicateSymbols(newCallees);
-    if (dedupedCallees.length > 0) {
+    if (newCallees.length > 0) {
       graphResults.value = {
         callers: graphResults.value.callers,
-        callees: [...graphResults.value.callees, ...dedupedCallees],
+        callees: [...graphResults.value.callees, ...newCallees],
       };
     }
     if (newEdges.length > 0) {
       graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
     }
 
-    if (dedupedCallees.length === 0 && newEdges.length === 0) {
+    if (newCallees.length === 0 && newEdges.length === 0) {
       Message.info("未发现更多被调用者");
     }
   } catch {
