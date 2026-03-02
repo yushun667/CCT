@@ -45,8 +45,12 @@ pub async fn start_full_parse(
     let compile_db = project.compile_db_path.clone().or_else(|| {
         find_compile_commands(&source_root)
     });
-    if let Some(ref db) = compile_db {
-        info!(compile_db = %db, "使用编译数据库");
+    // 将编译数据库重写到 .cct/ 并替换旧机器路径，避免 Clang "Cannot chdir into ..."
+    let effective_compile_db: Option<std::path::PathBuf> = compile_db.as_ref().and_then(|db_path| {
+        rewrite_compile_commands_to_cct(&source_root, db_path)
+    }).or_else(|| compile_db.as_ref().map(|s| std::path::PathBuf::from(s.as_str())));
+    if let Some(ref db) = effective_compile_db {
+        info!(compile_db = %db.display(), "使用编译数据库");
     }
     let excluded_dirs = project.excluded_dirs.clone();
     let pid = project_id.clone();
@@ -79,7 +83,7 @@ pub async fn start_full_parse(
                 info!("本地解析后台线程启动");
 
                 let scheduler = ParseScheduler::new(None);
-                let compile_db_path = compile_db.as_deref().map(std::path::Path::new);
+                let compile_db_path = effective_compile_db.as_deref();
 
                 let result = scheduler.schedule_parse(
                     std::path::Path::new(&source_root),
@@ -526,12 +530,122 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, CctError> {
     Ok(result)
 }
 
+/// 将 compile_commands.json 重写到项目 .cct 目录并替换其中的绝对路径为当前 source_root，
+/// 避免从其他机器/盘符拷贝的编译数据库导致 Clang 报 "Cannot chdir into ..."。
+///
+/// 若成功，返回重写后的 compile_commands.json 路径（`source_root/.cct/compile_commands.json`），
+/// 解析时使用该路径（Clang 会取父目录作为 compile_db 目录）；否则返回 None。
+fn rewrite_compile_commands_to_cct(
+    source_root: &str,
+    compile_commands_file: &str,
+) -> Option<std::path::PathBuf> {
+    use std::path::Path;
+
+    let content = std::fs::read_to_string(compile_commands_file).ok()?;
+    let mut entries: Vec<serde_json::Value> = serde_json::from_str(&content).ok()?;
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut all_paths: Vec<String> = Vec::new();
+    for e in &entries {
+        if let Some(dir) = e.get("directory").and_then(|v| v.as_str()) {
+            all_paths.push(dir.to_string());
+        }
+        if let Some(f) = e.get("file").and_then(|v| v.as_str()) {
+            all_paths.push(f.to_string());
+        }
+    }
+    let path_refs: Vec<&str> = all_paths.iter().map(String::as_str).collect();
+    let old_base = common_path_prefix(path_refs)?;
+    let new_base = Path::new(source_root);
+    let new_base_str = new_base.display().to_string();
+
+    for e in entries.iter_mut() {
+        if let Some(obj) = e.as_object_mut() {
+            if let Some(serde_json::Value::String(ref dir)) = obj.get("directory") {
+                let new_dir = replace_prefix(dir, &old_base, &new_base_str);
+                obj.insert("directory".to_string(), serde_json::Value::String(new_dir));
+            }
+            if let Some(serde_json::Value::String(ref f)) = obj.get("file") {
+                let new_file = replace_prefix(f, &old_base, &new_base_str);
+                obj.insert("file".to_string(), serde_json::Value::String(new_file));
+            }
+        }
+    }
+
+    let cct_dir = Path::new(source_root).join(".cct");
+    std::fs::create_dir_all(&cct_dir).ok()?;
+    let out_path = cct_dir.join("compile_commands.json");
+    let out_content = serde_json::to_string_pretty(&entries).ok()?;
+    std::fs::write(&out_path, out_content).ok()?;
+    info!(
+        from = %compile_commands_file,
+        to = %out_path.display(),
+        old_base = %old_base,
+        "已重写编译数据库到 .cct 并替换路径"
+    );
+    Some(out_path)
+}
+
+fn common_path_prefix(paths: Vec<&str>) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    let mut components: Vec<_> = paths
+        .iter()
+        .map(|p| {
+            std::path::Path::new(p)
+                .components()
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    components.sort_by_key(|c| c.len());
+    let shortest = components.first()?;
+    let mut prefix_len = 0;
+    for (i, comp) in shortest.iter().enumerate() {
+        if components.iter().all(|c| c.get(i) == Some(comp)) {
+            prefix_len = i + 1;
+        } else {
+            break;
+        }
+    }
+    if prefix_len == 0 {
+        return None;
+    }
+    let mut prefix = std::path::PathBuf::new();
+    for comp in &shortest[..prefix_len] {
+        prefix.push(comp.as_os_str());
+    }
+    Some(prefix.display().to_string())
+}
+
+fn replace_prefix(path: &str, old_prefix: &str, new_prefix: &str) -> String {
+    let p = path.trim_end_matches(std::path::MAIN_SEPARATOR);
+    let old = old_prefix.trim_end_matches(std::path::MAIN_SEPARATOR);
+    if p == old || p.starts_with(&format!("{}{}", old, std::path::MAIN_SEPARATOR)) {
+        let rest = if p == old {
+            ""
+        } else {
+            &p[old.len() + 1..]
+        };
+        if rest.is_empty() {
+            new_prefix.to_string()
+        } else {
+            format!("{}{}{}", new_prefix, std::path::MAIN_SEPARATOR, rest)
+        }
+    } else {
+        path.to_string()
+    }
+}
+
 /// 自动搜索 compile_commands.json
 ///
 /// 依次在源码目录及常见构建子目录中查找，返回第一个找到的路径。
 fn find_compile_commands(source_root: &str) -> Option<String> {
     let root = std::path::Path::new(source_root);
     let candidates = [
+        root.join(".cct").join("compile_commands.json"), // 优先使用已重写到 .cct 的副本
         root.join("compile_commands.json"),
         root.join("build").join("compile_commands.json"),
         root.join("cmake-build-debug").join("compile_commands.json"),
