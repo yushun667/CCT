@@ -35,10 +35,17 @@ const progressFile = computed(() => {
   return file.split("/").pop() ?? "";
 });
 
+const progressPct = computed(() => {
+  const p = projectStore.parseProgress;
+  if (!p) return 0;
+  return p.percentage;
+});
+
 const progressText = computed(() => {
   const p = projectStore.parseProgress;
   if (!p) return "";
-  return `${p.parsed_files}/${p.total_files}`;
+  const pct = Math.round(progressPct.value * 100);
+  return `${p.parsed_files}/${p.total_files} (${pct}%)`;
 });
 </script>
 

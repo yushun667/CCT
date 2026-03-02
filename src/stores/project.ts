@@ -139,9 +139,12 @@ export const useProjectStore = defineStore("project", () => {
   async function listenParseProgress() {
     await listen<ParseProgress>("parse-progress", (event) => {
       const p = { ...event.payload };
-      // 防御性夹紧：后端浮点误差或并发竞态可能导致百分比溢出
+      // 后端发送 0-100 的百分比值，Arco Design 的 a-progress
+      // 组件 percent 属性期望 0-1 的小数，需要转换并夹紧
       const raw = Number(p.percentage);
-      p.percentage = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0;
+      p.percentage = Number.isFinite(raw)
+        ? Math.min(1, Math.max(0, raw / 100))
+        : 0;
       parseProgress.value = p;
 
       if (p.phase === "parsing") {
