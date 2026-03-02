@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -470,6 +471,26 @@ public:
         }
 
         data_.calls.push_back(std::move(ci));
+
+        // 为不在主文件中的被调用者生成外部占位符号，
+        // 使调用关系的两端都在符号表中，避免 callee 查不到
+        if (!is_in_main_file(callee_decl->getLocation())) {
+            std::string qname = callee_decl->getQualifiedNameAsString();
+            if (seen_external_symbols_.insert(qname).second) {
+                SymbolInfo ext_sym;
+                ext_sym.name = callee_decl->getNameAsString();
+                ext_sym.qualified_name = qname;
+                ext_sym.kind = "function";
+                ext_sym.sub_kind = "external";
+                ext_sym.is_definition = false;
+                fill_location(callee_decl->getLocation(), ext_sym);
+                if (auto *FT = callee_decl->getType()->getAs<clang::FunctionType>()) {
+                    ext_sym.return_type = FT->getReturnType().getAsString();
+                }
+                data_.symbols.push_back(std::move(ext_sym));
+            }
+        }
+
         return true;
     }
 
@@ -533,6 +554,7 @@ private:
     clang::SourceManager &sm_;
     ParseData &data_;
     std::string main_file_;
+    std::set<std::string> seen_external_symbols_;
 
     bool is_in_main_file(clang::SourceLocation loc) {
         if (loc.isInvalid()) return false;
