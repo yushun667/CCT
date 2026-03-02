@@ -64,6 +64,7 @@ impl CallQueryEngine {
         }
 
         dedup_relations(&mut all_relations);
+        dedup_relations_by_caller_name(db, &mut all_relations);
         debug!(total = all_relations.len(), "调用者查询完成");
         Ok(all_relations)
     }
@@ -113,6 +114,7 @@ impl CallQueryEngine {
         }
 
         dedup_relations(&mut all_relations);
+        dedup_relations_by_callee_name(db, &mut all_relations);
         debug!(total = all_relations.len(), "被调用者查询完成");
         Ok(all_relations)
     }
@@ -193,6 +195,48 @@ fn query_direct_callees(db: &IndexDatabase, caller_id: i64) -> Result<Vec<CallRe
 fn dedup_relations(rels: &mut Vec<CallRelation>) {
     let mut seen = HashSet::new();
     rels.retain(|r| seen.insert((r.caller_id, r.callee_id)));
+}
+
+/// 按 callee 的 qualified_name 去重（查询被调用者时使用）
+///
+/// 同一个函数在声明和定义中会产生不同的 symbol ID，
+/// 导致调用关系中出现多条指向同一逻辑函数的记录。
+/// 通过 qualified_name 去重，每个逻辑函数只保留一条关系。
+fn dedup_relations_by_callee_name(db: &IndexDatabase, rels: &mut Vec<CallRelation>) {
+    let conn = db.conn();
+    let mut seen_names: HashSet<String> = HashSet::new();
+    rels.retain(|r| {
+        let qname: Option<String> = conn
+            .query_row(
+                "SELECT qualified_name FROM symbols WHERE id = ?1",
+                params![r.callee_id],
+                |row| row.get(0),
+            )
+            .ok();
+        match qname {
+            Some(name) => seen_names.insert(name),
+            None => true,
+        }
+    });
+}
+
+/// 按 caller 的 qualified_name 去重（查询调用者时使用）
+fn dedup_relations_by_caller_name(db: &IndexDatabase, rels: &mut Vec<CallRelation>) {
+    let conn = db.conn();
+    let mut seen_names: HashSet<String> = HashSet::new();
+    rels.retain(|r| {
+        let qname: Option<String> = conn
+            .query_row(
+                "SELECT qualified_name FROM symbols WHERE id = ?1",
+                params![r.caller_id],
+                |row| row.get(0),
+            )
+            .ok();
+        match qname {
+            Some(name) => seen_names.insert(name),
+            None => true,
+        }
+    });
 }
 
 fn row_to_call_relation(row: &rusqlite::Row) -> Result<CallRelation, rusqlite::Error> {
