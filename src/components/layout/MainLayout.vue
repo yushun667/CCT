@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useSettingsStore } from "@/stores/settings";
 import { useEditorStore } from "@/stores/editor";
 import { useProjectStore } from "@/stores/project";
@@ -9,18 +9,16 @@ import { open } from "@tauri-apps/plugin-dialog";
 import Sidebar from "./Sidebar.vue";
 import StatusBar from "./StatusBar.vue";
 import AiPanel from "@/components/ai/AiPanel.vue";
-import EditorTabs from "@/components/editor/EditorTabs.vue";
-import CodeEditor from "@/components/editor/CodeEditor.vue";
+import SplitEditor from "@/components/editor/SplitEditor.vue";
 import WelcomeScreen from "@/components/welcome/WelcomeScreen.vue";
 import TerminalPanel from "@/components/terminal/TerminalPanel.vue";
-import CallGraphView from "@/components/graph/CallGraphView.vue";
 import SettingsDialog from "@/components/settings/SettingsDialog.vue";
 import ProjectSettingsDialog from "@/components/project/ProjectSettingsDialog.vue";
 import { Message } from "@arco-design/web-vue";
 import { useI18n } from "vue-i18n";
 import * as editorApi from "@/api/editor";
 import * as queryApi from "@/api/query";
-import type { Symbol as CctSymbol, Project } from "@/api/types";
+import type { Symbol as CctSymbol, Project, CallGraphData } from "@/api/types";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 const { t } = useI18n();
@@ -29,16 +27,25 @@ const editorStore = useEditorStore();
 const projectStore = useProjectStore();
 useWindowTitle();
 
-const codeEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null);
-
-watch(
-  () => editorStore.targetLineSeq,
-  () => {
-    if (editorStore.targetLine && codeEditorRef.value) {
-      codeEditorRef.value.revealLine(editorStore.targetLine);
-    }
-  },
-);
+// ── 侧边栏拖拽调整宽度 ──────────────────────────────────────
+function onSidebarResizeStart(e: MouseEvent) {
+  const startX = e.clientX;
+  const startWidth = settings.sidebarWidth;
+  const onMove = (ev: MouseEvent) => {
+    const newWidth = startWidth + (ev.clientX - startX);
+    settings.sidebarWidth = Math.max(120, Math.min(600, newWidth));
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+}
 
 // ── 原 Toolbar 功能迁移 ─────────────────────────────────────
 const showSettings = ref(false);
@@ -90,25 +97,9 @@ onUnmounted(() => {
   menuUnlisteners.forEach((fn) => fn());
 });
 
-interface GraphEdgeData {
-  sourceId: number;
-  targetId: number;
-}
-
-const graphVisible = ref(false);
-const graphSymbol = ref<CctSymbol | null>(null);
-const graphResults = ref<{ callers: CctSymbol[]; callees: CctSymbol[] }>({
-  callers: [],
-  callees: [],
-});
-const graphExtraEdges = ref<GraphEdgeData[]>([]);
-const graphLoading = ref(false);
-
-const graphSymMap = new Map<number, CctSymbol>();
-
+// ── 调用图：加载并作为编辑器 Tab 打开 ────────────────────────
 /**
  * 统一符号去重：按 qualified_name 合并，优先保留 is_definition=true 的版本。
- * 确保同一逻辑符号在调用图中只显示一个节点。
  */
 function deduplicateSymbols(syms: CctSymbol[]): CctSymbol[] {
   const seen = new Map<string, CctSymbol>();
@@ -131,13 +122,11 @@ async function findSymbolAtLine(line: number): Promise<CctSymbol | null> {
     const symbols = await editorApi.getFileSymbols(projectId, file.filePath);
     if (symbols.length === 0) return null;
 
-    // 优先精确匹配：光标行在符号定义范围内
     const exact = symbols.find(
       (s) => s.line <= line && (s.end_line ?? s.line) >= line,
     );
     if (exact) return exact;
 
-    // 退而求其次：找最近且在光标之前定义的符号
     let best: CctSymbol | null = null;
     for (const s of symbols) {
       if (s.line <= line) {
@@ -151,13 +140,9 @@ async function findSymbolAtLine(line: number): Promise<CctSymbol | null> {
 }
 
 async function loadCallGraph(sym: CctSymbol) {
-  graphSymbol.value = sym;
-  graphVisible.value = true;
-  graphLoading.value = true;
-  graphExtraEdges.value = [];
-  graphSymMap.clear();
-
   const projectId = projectStore.currentProjectId!;
+  const graphSymMap = new Map<number, CctSymbol>();
+
   try {
     const [callerRels, calleeRels] = await Promise.all([
       queryApi.queryCallers(projectId, sym.id, 5),
@@ -166,7 +151,6 @@ async function loadCallGraph(sym: CctSymbol) {
 
     graphSymMap.set(sym.id, sym);
 
-    // 收集所有需要的符号 ID，按需精确查询
     const neededIds = new Set<number>();
     for (const r of callerRels) {
       neededIds.add(r.caller_id);
@@ -179,14 +163,12 @@ async function loadCallGraph(sym: CctSymbol) {
     neededIds.delete(sym.id);
 
     if (neededIds.size > 0) {
-      const fetched = await queryApi.getSymbolsByIds(
-        projectId,
-        Array.from(neededIds),
-      );
+      const fetched = await queryApi.getSymbolsByIds(projectId, Array.from(neededIds));
       for (const s of fetched) graphSymMap.set(s.id, s);
     }
 
-    graphResults.value = {
+    const graphData: CallGraphData = {
+      symbol: sym,
       callers: deduplicateSymbols(
         callerRels
           .map((r) => graphSymMap.get(r.caller_id))
@@ -197,131 +179,12 @@ async function loadCallGraph(sym: CctSymbol) {
           .map((r) => graphSymMap.get(r.callee_id))
           .filter((s): s is CctSymbol => s != null),
       ),
+      extraEdges: [],
     };
+
+    editorStore.openCallGraph(graphData);
   } catch {
-    graphResults.value = { callers: [], callees: [] };
-  } finally {
-    graphLoading.value = false;
-  }
-}
-
-async function handleQueryNodeCallers(sym: CctSymbol) {
-  const projectId = projectStore.currentProjectId;
-  if (!projectId) return;
-
-  try {
-    const rels = await queryApi.queryCallers(projectId, sym.id, 1);
-
-    // 按需查询缺失的符号
-    const missingIds = new Set<number>();
-    for (const r of rels) {
-      if (!graphSymMap.has(r.caller_id)) missingIds.add(r.caller_id);
-      if (!graphSymMap.has(r.callee_id)) missingIds.add(r.callee_id);
-    }
-    if (missingIds.size > 0) {
-      const fetched = await queryApi.getSymbolsByIds(
-        projectId,
-        Array.from(missingIds),
-      );
-      for (const s of fetched) graphSymMap.set(s.id, s);
-    }
-
-    const existingNames = new Set([
-      graphSymbol.value!.qualified_name,
-      ...graphResults.value.callers.map((s) => s.qualified_name),
-      ...graphResults.value.callees.map((s) => s.qualified_name),
-    ]);
-
-    const newEdges: GraphEdgeData[] = [];
-    const newCallers: CctSymbol[] = [];
-
-    for (const r of rels) {
-      const callerSym = graphSymMap.get(r.caller_id);
-      if (!callerSym) continue;
-
-      newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
-
-      if (!existingNames.has(callerSym.qualified_name)) {
-        newCallers.push(callerSym);
-        existingNames.add(callerSym.qualified_name);
-      }
-    }
-
-    if (newCallers.length > 0) {
-      graphResults.value = {
-        callers: [...graphResults.value.callers, ...newCallers],
-        callees: graphResults.value.callees,
-      };
-    }
-    if (newEdges.length > 0) {
-      graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
-    }
-
-    if (newCallers.length === 0 && newEdges.length === 0) {
-      Message.info("未发现更多调用者");
-    }
-  } catch {
-    Message.error("查询调用者失败");
-  }
-}
-
-async function handleQueryNodeCallees(sym: CctSymbol) {
-  const projectId = projectStore.currentProjectId;
-  if (!projectId) return;
-
-  try {
-    const rels = await queryApi.queryCallees(projectId, sym.id, 1);
-
-    // 按需查询缺失的符号
-    const missingIds = new Set<number>();
-    for (const r of rels) {
-      if (!graphSymMap.has(r.caller_id)) missingIds.add(r.caller_id);
-      if (!graphSymMap.has(r.callee_id)) missingIds.add(r.callee_id);
-    }
-    if (missingIds.size > 0) {
-      const fetched = await queryApi.getSymbolsByIds(
-        projectId,
-        Array.from(missingIds),
-      );
-      for (const s of fetched) graphSymMap.set(s.id, s);
-    }
-
-    const existingNames = new Set([
-      graphSymbol.value!.qualified_name,
-      ...graphResults.value.callers.map((s) => s.qualified_name),
-      ...graphResults.value.callees.map((s) => s.qualified_name),
-    ]);
-
-    const newEdges: GraphEdgeData[] = [];
-    const newCallees: CctSymbol[] = [];
-
-    for (const r of rels) {
-      const calleeSym = graphSymMap.get(r.callee_id);
-      if (!calleeSym) continue;
-
-      newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
-
-      if (!existingNames.has(calleeSym.qualified_name)) {
-        newCallees.push(calleeSym);
-        existingNames.add(calleeSym.qualified_name);
-      }
-    }
-
-    if (newCallees.length > 0) {
-      graphResults.value = {
-        callers: graphResults.value.callers,
-        callees: [...graphResults.value.callees, ...newCallees],
-      };
-    }
-    if (newEdges.length > 0) {
-      graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
-    }
-
-    if (newCallees.length === 0 && newEdges.length === 0) {
-      Message.info("未发现更多被调用者");
-    }
-  } catch {
-    Message.error("查询被调用者失败");
+    Message.error("加载调用图失败");
   }
 }
 
@@ -341,12 +204,6 @@ async function handleShowCallers(line: number, _col: number) {
 function handleFindReferences(_line: number, _col: number) {
   Message.info("引用查询功能开发中");
 }
-
-function navigateToSymbol(sym: CctSymbol) {
-  const projectId = projectStore.currentProjectId ?? undefined;
-  editorStore.openFile(sym.file_path, projectId, sym.line ?? undefined);
-}
-
 </script>
 
 <template>
@@ -360,63 +217,25 @@ function navigateToSymbol(sym: CctSymbol) {
         class="sidebar-sider"
       >
         <Sidebar />
+        <div
+          v-if="!settings.sidebarCollapsed"
+          class="sidebar-resize-handle"
+          @mousedown.prevent="onSidebarResizeStart"
+        />
       </a-layout-sider>
 
       <a-layout class="center-column">
         <a-layout class="work-area">
           <a-layout-content class="main-content">
             <template v-if="editorStore.hasOpenFiles">
-              <EditorTabs />
-              <div class="editor-wrapper">
-                <CodeEditor
-                  ref="codeEditorRef"
-                  v-if="editorStore.activeFile"
-                  :key="editorStore.activeFile.filePath"
-                  :file-path="editorStore.activeFile.filePath"
-                  :content="editorStore.activeFile.content"
-                  :language="editorStore.activeFile.language"
-                  :line="editorStore.targetLine"
-                  @show-call-graph="handleShowCallGraph"
-                  @show-callers="handleShowCallers"
-                  @find-references="handleFindReferences"
-                />
-              </div>
+              <SplitEditor
+                @show-call-graph="handleShowCallGraph"
+                @show-callers="handleShowCallers"
+                @find-references="handleFindReferences"
+              />
             </template>
             <WelcomeScreen v-else />
           </a-layout-content>
-
-          <!-- 调用图可视化面板 -->
-          <a-layout-sider
-            v-if="graphVisible"
-            :width="480"
-            class="graph-panel-sider"
-          >
-            <div class="graph-panel">
-              <div class="graph-panel-header">
-                <span class="graph-panel-title">
-                  <icon-relation-one-to-many />
-                  调用图 — {{ graphSymbol?.name ?? "" }}
-                </span>
-                <a-button size="mini" type="text" @click="graphVisible = false">
-                  <template #icon><icon-close /></template>
-                </a-button>
-              </div>
-
-              <a-spin :loading="graphLoading" style="width: 100%; flex: 1">
-                <div v-if="!graphLoading && graphSymbol" class="graph-canvas-wrapper">
-                  <CallGraphView
-                    :root-symbol="graphSymbol"
-                    :callers="graphResults.callers"
-                    :callees="graphResults.callees"
-                    :extra-edges="graphExtraEdges"
-                    @navigate="navigateToSymbol"
-                    @query-callers="handleQueryNodeCallers"
-                    @query-callees="handleQueryNodeCallees"
-                  />
-                </div>
-              </a-spin>
-            </div>
-          </a-layout-sider>
 
           <!-- AI 面板 -->
           <a-layout-sider
@@ -464,10 +283,27 @@ function navigateToSymbol(sym: CctSymbol) {
 
 .sidebar-sider {
   border-right: 1px solid var(--color-border);
+  position: relative;
 }
 
 .sidebar-sider :deep(.arco-layout-sider-trigger) {
   display: none;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  transition: background 0.15s;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: rgb(var(--primary-6));
 }
 
 .center-column {
@@ -490,51 +326,8 @@ function navigateToSymbol(sym: CctSymbol) {
   background: var(--color-bg-1);
 }
 
-.editor-wrapper {
-  flex: 1;
-  overflow: hidden;
-}
-
 .ai-panel-sider {
   border-left: 1px solid var(--color-border);
-}
-
-.graph-panel-sider {
-  border-left: 1px solid var(--color-border);
-}
-
-.graph-panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.graph-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
-.graph-panel-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-1);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.graph-canvas-wrapper {
-  width: 100%;
-  height: 100%;
-  min-height: 300px;
 }
 
 .bottom-panel {

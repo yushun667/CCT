@@ -171,11 +171,25 @@ export interface GraphData {
 
 // ── 编辑器 Tab 类型 ──────────────────────────────────────────────
 
+export interface GraphEdgeData {
+  sourceId: number;
+  targetId: number;
+}
+
+export interface CallGraphData {
+  symbol: Symbol;
+  callers: Symbol[];
+  callees: Symbol[];
+  extraEdges: GraphEdgeData[];
+}
+
 export interface EditorFile {
   filePath: string;
   fileName: string;
   content: string;
   language: string;
+  type: "file" | "call-graph";
+  graphData?: CallGraphData;
 }
 
 export interface AppConfig {

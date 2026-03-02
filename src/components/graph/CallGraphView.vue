@@ -253,7 +253,7 @@ function handleBgClick() {
 function handleWheel(e: WheelEvent) {
   e.preventDefault();
   const factor = e.deltaY > 0 ? 0.9 : 1.1;
-  scale.value = Math.max(0.2, Math.min(3, scale.value * factor));
+  scale.value = Math.max(0.01, scale.value * factor);
 }
 
 function handleMouseDown(e: MouseEvent) {

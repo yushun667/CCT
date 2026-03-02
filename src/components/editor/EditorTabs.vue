@@ -1,58 +1,99 @@
 <script setup lang="ts">
 /**
- * 编辑器 Tab 栏 — 多文件标签管理
+ * 编辑器 Tab 栏 — 多文件/多类型标签管理
  *
- * 显示已打开的文件标签，支持切换和关闭。
- * 活跃标签高亮显示，带关闭按钮。
+ * 通过 paneIndex prop 感知所属窗格，支持文件和调用图两种 Tab 类型。
+ * 调用图 Tab 显示专用图标和标题。
  */
+import { computed } from "vue";
 import { useEditorStore } from "@/stores/editor";
 import { useI18n } from "vue-i18n";
+import type { EditorFile } from "@/api/types";
+
+const props = withDefaults(defineProps<{
+  paneIndex?: number;
+}>(), {
+  paneIndex: 0,
+});
 
 const { t } = useI18n();
 const editorStore = useEditorStore();
 
+const files = computed(() => editorStore.getPaneFiles(props.paneIndex));
+const activeIndex = computed(() => editorStore.getPaneActiveIndex(props.paneIndex));
+
 function onTabClick(index: number) {
-  editorStore.setActiveFile(index);
+  editorStore.setActiveFile(index, props.paneIndex);
 }
 
 function onTabClose(index: number, event: Event) {
   event.stopPropagation();
-  editorStore.closeFile(index);
+  editorStore.closeFile(index, props.paneIndex);
 }
 
-function getFileIcon(language: string): string {
-  const iconMap: Record<string, string> = {
-    c: "icon-file",
-    cpp: "icon-file",
-    json: "icon-file",
-    markdown: "icon-file",
-    plaintext: "icon-file",
-  };
-  return iconMap[language] ?? "icon-file";
+function getTabIcon(file: EditorFile): string {
+  if (file.type === "call-graph") return "icon-relation-one-to-many";
+  return "icon-file";
+}
+
+function getTabLabel(file: EditorFile): string {
+  if (file.type === "call-graph") return file.fileName;
+  return file.fileName;
+}
+
+function onSplitRight() {
+  editorStore.splitRight();
+}
+
+function onCloseSplit() {
+  editorStore.closeSplit();
 }
 </script>
 
 <template>
   <div class="editor-tabs">
     <div
-      v-if="editorStore.openFiles.length === 0"
+      v-if="files.length === 0"
       class="no-files"
     >
       <span>{{ t("editor.noFileOpen") }}</span>
     </div>
     <div
-      v-for="(file, index) in editorStore.openFiles"
+      v-for="(file, index) in files"
       :key="file.filePath"
-      :class="['tab', { active: index === editorStore.activeFileIndex }]"
+      :class="['tab', { active: index === activeIndex }]"
       @click="onTabClick(index)"
     >
-      <component :is="getFileIcon(file.language)" class="tab-icon" />
-      <span class="tab-name" :title="file.filePath">{{ file.fileName }}</span>
+      <component :is="getTabIcon(file)" class="tab-icon" />
+      <span class="tab-name" :title="file.type === 'call-graph' ? file.fileName : file.filePath">
+        {{ getTabLabel(file) }}
+      </span>
       <a-button
         type="text"
         size="mini"
         class="tab-close"
         @click="onTabClose(index, $event)"
+      >
+        <template #icon><icon-close /></template>
+      </a-button>
+    </div>
+
+    <div class="tab-actions">
+      <a-button
+        v-if="!editorStore.splitMode"
+        size="mini"
+        type="text"
+        title="拆分编辑器"
+        @click="onSplitRight"
+      >
+        <template #icon><icon-swap /></template>
+      </a-button>
+      <a-button
+        v-if="editorStore.splitMode && paneIndex === 1"
+        size="mini"
+        type="text"
+        title="关闭拆分"
+        @click="onCloseSplit"
       >
         <template #icon><icon-close /></template>
       </a-button>
@@ -117,5 +158,13 @@ function getFileIcon(language: string): string {
 .tab:hover .tab-close,
 .tab.active .tab-close {
   opacity: 1;
+}
+
+.tab-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  flex-shrink: 0;
 }
 </style>
