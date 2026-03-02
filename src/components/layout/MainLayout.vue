@@ -269,8 +269,7 @@ function navigateToSymbol(sym: CctSymbol) {
         :width="settings.sidebarWidth"
         :collapsed="settings.sidebarCollapsed"
         :collapsed-width="48"
-        collapsible
-        :trigger="null"
+        :hide-trigger="true"
         class="sidebar-sider"
       >
         <Sidebar />
@@ -368,6 +367,10 @@ function navigateToSymbol(sym: CctSymbol) {
 
 .sidebar-sider {
   border-right: 1px solid var(--color-border);
+}
+
+.sidebar-sider :deep(.arco-layout-sider-trigger) {
+  display: none;
 }
 
 .center-column {
