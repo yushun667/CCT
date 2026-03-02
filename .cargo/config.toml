@@ -3,5 +3,7 @@
 # 将编译产物放到本地 SSD 上同时也提升构建速度
 target-dir = "/tmp/cct-target"
 
+# macOS: 链接时写入 rpath，使运行时能找到 third_party/llvm/lib 下的 libunwind、libc++ 等。
+# 使用 run.sh 时会自动按项目路径设置 RUSTFLAGS；直接 cargo 构建时使用此处路径（请按本机项目位置修改）。
 [target.'cfg(target_os = "macos")']
-rustflags = ["-C", "link-arg=-Wl,-rpath,/Volumes/大硬盘/develop/CCT/third_party/llvm/lib"]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/Volumes/SSD_1T/develop/CCT/third_party/llvm/lib"]

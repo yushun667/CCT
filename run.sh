@@ -10,6 +10,11 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
+# macOS: 让最终二进制能找到 third_party/llvm 下的 libunwind/libc++ 等动态库（run.sh 调用时路径始终正确）
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,$PROJECT_DIR/third_party/llvm/lib"
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
