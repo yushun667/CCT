@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useSettingsStore } from "@/stores/settings";
 import { useEditorStore } from "@/stores/editor";
 import { useProjectStore } from "@/stores/project";
+import { useWindowTitle } from "@/composables/useWindowTitle";
+import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import Sidebar from "./Sidebar.vue";
-import Toolbar from "./Toolbar.vue";
 import StatusBar from "./StatusBar.vue";
 import AiPanel from "@/components/ai/AiPanel.vue";
 import EditorTabs from "@/components/editor/EditorTabs.vue";
@@ -12,14 +14,70 @@ import CodeEditor from "@/components/editor/CodeEditor.vue";
 import WelcomeScreen from "@/components/welcome/WelcomeScreen.vue";
 import TerminalPanel from "@/components/terminal/TerminalPanel.vue";
 import CallGraphView from "@/components/graph/CallGraphView.vue";
+import SettingsDialog from "@/components/settings/SettingsDialog.vue";
+import ProjectSettingsDialog from "@/components/project/ProjectSettingsDialog.vue";
 import { Message } from "@arco-design/web-vue";
+import { useI18n } from "vue-i18n";
 import * as editorApi from "@/api/editor";
 import * as queryApi from "@/api/query";
-import type { Symbol as CctSymbol } from "@/api/types";
+import type { Symbol as CctSymbol, Project } from "@/api/types";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 
+const { t } = useI18n();
 const settings = useSettingsStore();
 const editorStore = useEditorStore();
 const projectStore = useProjectStore();
+useWindowTitle();
+
+// ── 原 Toolbar 功能迁移 ─────────────────────────────────────
+const showSettings = ref(false);
+const showProjectSettings = ref(false);
+const settingsProject = ref<Project | null>(null);
+
+async function handleOpenDirectory() {
+  const selected = await open({ directory: true, multiple: false });
+  if (!selected) return;
+  try {
+    await projectStore.openLocalDirectory(selected as string);
+    Message.success(t("project.openSuccess"));
+  } catch {
+    // handled in store
+  }
+}
+
+function handleProjectSettings() {
+  if (!projectStore.currentProject) return;
+  settingsProject.value = projectStore.currentProject;
+  showProjectSettings.value = true;
+}
+
+async function handleParse() {
+  if (!projectStore.currentProject) return;
+  await projectStore.startParse(projectStore.currentProject.id);
+  Message.info(t("project.parseStarted"));
+}
+
+function handleSettingsSaved() {
+  projectStore.fetchProjects();
+}
+
+const menuUnlisteners: UnlistenFn[] = [];
+
+onMounted(async () => {
+  menuUnlisteners.push(
+    await listen("open_directory", () => handleOpenDirectory()),
+    await listen("start_parse", () => handleParse()),
+    await listen("project_settings", () => handleProjectSettings()),
+    await listen("toggle_sidebar", () => settings.toggleSidebar()),
+    await listen("toggle_terminal", () => settings.toggleBottomPanel()),
+    await listen("toggle_ai", () => settings.toggleAiPanel()),
+    await listen("app_settings", () => { showSettings.value = true; }),
+  );
+});
+
+onUnmounted(() => {
+  menuUnlisteners.forEach((fn) => fn());
+});
 
 interface GraphEdgeData {
   sourceId: number;
@@ -262,8 +320,6 @@ function navigateToSymbol(sym: CctSymbol) {
 
 <template>
   <a-layout class="main-layout">
-    <Toolbar />
-
     <a-layout class="content-layout">
       <a-layout-sider
         :width="settings.sidebarWidth"
@@ -351,6 +407,14 @@ function navigateToSymbol(sym: CctSymbol) {
     </a-layout>
 
     <StatusBar />
+
+    <SettingsDialog v-model:visible="showSettings" />
+    <ProjectSettingsDialog
+      v-if="settingsProject"
+      v-model:visible="showProjectSettings"
+      :project="settingsProject"
+      @saved="handleSettingsSaved"
+    />
   </a-layout>
 </template>
 

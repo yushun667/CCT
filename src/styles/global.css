@@ -6,6 +6,16 @@
   line-height: 1.5;
   font-weight: 400;
   color-scheme: light dark;
+
+  --cct-titlebar-bg: #e8e8e8;
+  --cct-titlebar-text: #1d2129;
+  --cct-bg-app: #f2f3f5;
+}
+
+html.dark {
+  --cct-titlebar-bg: #1e1e1e;
+  --cct-titlebar-text: #ffffffd9;
+  --cct-bg-app: #17171a;
 }
 
 * {
@@ -20,6 +30,7 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
+  background: var(--cct-bg-app);
 }
 
 ::-webkit-scrollbar {

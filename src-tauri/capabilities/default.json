@@ -5,6 +5,9 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-set-title",
+    "core:window:allow-theme",
+    "core:window:allow-set-theme",
     "shell:allow-open",
     "shell:allow-stdin-write",
     "shell:allow-spawn",

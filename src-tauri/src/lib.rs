@@ -35,11 +35,16 @@ fn build_native_menu(app: &tauri::App) -> Result<tauri::menu::Menu<tauri::Wry>, 
         .accelerator("CmdOrCtrl+,")
         .build(app)?;
 
+    let app_settings = MenuItemBuilder::with_id("app_settings", "应用设置...")
+        .build(app)?;
+
     let file_menu = SubmenuBuilder::new(app, "文件")
         .item(&open_dir)
         .separator()
         .item(&parse)
         .item(&project_settings)
+        .separator()
+        .item(&app_settings)
         .separator()
         .close_window()
         .quit()
