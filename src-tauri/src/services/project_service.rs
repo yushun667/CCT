@@ -118,7 +118,15 @@ impl ProjectService {
             if root.is_empty() {
                 continue;
             }
-            Self::ensure_cct_dir(&root)?;
+            // source_root 在当前机器上不存在时跳过（可能是换盘或换机器后的残留）
+            if !Path::new(&root).is_dir() {
+                warn!(root = %root, id = %project.id, "迁移跳过：源码目录不存在");
+                continue;
+            }
+            if let Err(e) = Self::ensure_cct_dir(&root) {
+                warn!(root = %root, error = %e, "迁移时创建 .cct 目录失败，跳过");
+                continue;
+            }
             let project_path = Self::project_file_in_root(&root);
             let project_json = serde_json::to_string_pretty(&project)?;
             if let Err(e) = std::fs::write(&project_path, project_json) {
@@ -168,13 +176,11 @@ impl ProjectService {
             return Err(CctError::InvalidSourceRoot(source_root));
         }
 
-        let source_root_abs = std::fs::canonicalize(src_path)
-            .map_err(|e| CctError::InvalidSourceRoot(format!("{}: {}", source_root, e)))?
-            .display()
-            .to_string();
+        // 去除尾部分隔符，保持路径一致性
+        let source_root_norm = source_root.trim_end_matches('/').to_string();
 
         let existing = self.list()?;
-        if let Some(found) = existing.iter().find(|p| p.source_root == source_root_abs) {
+        if let Some(found) = existing.iter().find(|p| p.source_root.trim_end_matches('/') == source_root_norm) {
             debug!(id = %found.id, name = %found.name, "目录已有对应项目，直接返回");
             return Ok(found.clone());
         }
@@ -186,16 +192,16 @@ impl ProjectService {
             name
         };
 
-        let project = Project::new_local(final_name, source_root_abs.clone());
-        Self::ensure_cct_dir(&source_root_abs)?;
-        let file = Self::project_file_in_root(&source_root_abs);
+        let project = Project::new_local(final_name, source_root_norm.clone());
+        Self::ensure_cct_dir(&source_root_norm)?;
+        let file = Self::project_file_in_root(&source_root_norm);
         let content = serde_json::to_string_pretty(&project)?;
         std::fs::write(&file, content)?;
 
         let mut registry = self.read_registry()?;
         registry.push(RegistryEntry {
             id: project.id,
-            source_root: source_root_abs,
+            source_root: source_root_norm,
         });
         self.write_registry(&registry)?;
 
