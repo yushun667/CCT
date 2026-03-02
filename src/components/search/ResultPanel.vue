@@ -67,8 +67,8 @@ async function querySymbol(symbolId: number) {
   }
 }
 
-function navigateToFile(filePath: string, _line: number) {
-  editorStore.openFile(filePath, projectStore.currentProjectId ?? undefined);
+function navigateToFile(filePath: string, line: number) {
+  editorStore.openFile(filePath, projectStore.currentProjectId ?? undefined, line);
 }
 
 function shortFileName(path: string): string {

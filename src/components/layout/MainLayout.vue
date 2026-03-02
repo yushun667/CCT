@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, watch, onMounted, onUnmounted } from "vue";
 import { useSettingsStore } from "@/stores/settings";
 import { useEditorStore } from "@/stores/editor";
 import { useProjectStore } from "@/stores/project";
@@ -28,6 +28,17 @@ const settings = useSettingsStore();
 const editorStore = useEditorStore();
 const projectStore = useProjectStore();
 useWindowTitle();
+
+const codeEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null);
+
+watch(
+  () => editorStore.targetLineSeq,
+  () => {
+    if (editorStore.targetLine && codeEditorRef.value) {
+      codeEditorRef.value.revealLine(editorStore.targetLine);
+    }
+  },
+);
 
 // ── 原 Toolbar 功能迁移 ─────────────────────────────────────
 const showSettings = ref(false);
@@ -313,7 +324,7 @@ function handleFindReferences(_line: number, _col: number) {
 
 function navigateToSymbol(sym: CctSymbol) {
   const projectId = projectStore.currentProjectId ?? undefined;
-  editorStore.openFile(sym.file_path, projectId);
+  editorStore.openFile(sym.file_path, projectId, sym.line ?? undefined);
 }
 
 </script>
@@ -338,11 +349,13 @@ function navigateToSymbol(sym: CctSymbol) {
               <EditorTabs />
               <div class="editor-wrapper">
                 <CodeEditor
+                  ref="codeEditorRef"
                   v-if="editorStore.activeFile"
                   :key="editorStore.activeFile.filePath"
                   :file-path="editorStore.activeFile.filePath"
                   :content="editorStore.activeFile.content"
                   :language="editorStore.activeFile.language"
+                  :line="editorStore.targetLine"
                   @show-call-graph="handleShowCallGraph"
                   @show-callers="handleShowCallers"
                   @find-references="handleFindReferences"

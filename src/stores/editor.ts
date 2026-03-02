@@ -13,6 +13,8 @@ import * as editorApi from "@/api/editor";
 export const useEditorStore = defineStore("editor", () => {
   const openFiles = ref<EditorFile[]>([]);
   const activeFileIndex = ref(-1);
+  const targetLine = ref<number | null>(null);
+  const targetLineSeq = ref(0);
   const fileSymbols = ref<Symbol[]>([]);
   const loading = ref(false);
   const error = ref<string | null>(null);
@@ -48,8 +50,10 @@ export const useEditorStore = defineStore("editor", () => {
     return langMap[ext] ?? "plaintext";
   }
 
-  async function openFile(filePath: string, projectId?: string) {
+  async function openFile(filePath: string, projectId?: string, line?: number) {
     error.value = null;
+    targetLine.value = line ?? null;
+    targetLineSeq.value++;
 
     const existingIdx = openFiles.value.findIndex(
       (f) => f.filePath === filePath,
@@ -126,6 +130,8 @@ export const useEditorStore = defineStore("editor", () => {
   return {
     openFiles,
     activeFileIndex,
+    targetLine,
+    targetLineSeq,
     activeFile,
     hasOpenFiles,
     fileSymbols,

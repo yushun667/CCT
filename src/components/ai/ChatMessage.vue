@@ -77,11 +77,9 @@ async function handleClick(event: MouseEvent) {
     const file = target.dataset.file;
     const line = target.dataset.line;
     if (file) {
-      await editorStore.openFile(file);
+      const lineNum = line ? parseInt(line, 10) : undefined;
+      await editorStore.openFile(file, undefined, lineNum);
       await router.push("/editor");
-      if (line) {
-        console.log(`[ChatMessage] 打开文件 ${file}:${line}`);
-      }
     }
   }
 }

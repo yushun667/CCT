@@ -77,7 +77,7 @@ async function doSearch(query: string) {
 }
 
 function onSelect(symbol: Symbol) {
-  editorStore.openFile(symbol.file_path, projectStore.currentProjectId ?? undefined);
+  editorStore.openFile(symbol.file_path, projectStore.currentProjectId ?? undefined, symbol.line);
   close();
 }
 
