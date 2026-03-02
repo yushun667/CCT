@@ -96,10 +96,46 @@ function buildLayout() {
   });
   g.setDefaultEdgeLabel(() => ({}));
 
+  // 按 qualified_name 去重，避免声明+定义产生重复节点；优先保留定义
   const allSymbols = new Map<number, CctSymbol>();
-  allSymbols.set(props.rootSymbol.id, props.rootSymbol);
-  for (const s of props.callers) allSymbols.set(s.id, s);
-  for (const s of props.callees) allSymbols.set(s.id, s);
+  const nameToId = new Map<string, number>();
+
+  function addSymbol(s: CctSymbol) {
+    const existId = nameToId.get(s.qualified_name);
+    if (existId != null) {
+      const exist = allSymbols.get(existId);
+      if (exist && !exist.is_definition && s.is_definition) {
+        allSymbols.delete(existId);
+        allSymbols.set(s.id, s);
+        nameToId.set(s.qualified_name, s.id);
+      }
+      return;
+    }
+    allSymbols.set(s.id, s);
+    nameToId.set(s.qualified_name, s.id);
+  }
+
+  addSymbol(props.rootSymbol);
+  for (const s of props.callers) addSymbol(s);
+  for (const s of props.callees) addSymbol(s);
+
+  // 构建全量 qualified_name → 保留 ID 的映射，用于将边指向正确节点
+  const allNameToCanonId = new Map<string, number>();
+  for (const [id, s] of allSymbols) allNameToCanonId.set(s.qualified_name, id);
+
+  // 将来源的 id 映射到去重后保留的 id（通过 graphSymMap 查 qualified_name）
+  function canonId(rawId: number): number {
+    // 先从当前 allSymbols 找
+    if (allSymbols.has(rawId)) return rawId;
+    // 否则从 props 中的完整符号列表找对应的 qualified_name
+    const all = [props.rootSymbol, ...props.callers, ...props.callees];
+    const sym = all.find((s) => s.id === rawId);
+    if (sym) {
+      const cid = allNameToCanonId.get(sym.qualified_name);
+      if (cid != null) return cid;
+    }
+    return rawId;
+  }
 
   const nodeKey = (id: number) => `n-${id}`;
 
@@ -117,15 +153,16 @@ function buildLayout() {
     }
   };
 
+  const rootId = canonId(props.rootSymbol.id);
   for (const caller of props.callers) {
-    addEdge(caller.id, props.rootSymbol.id);
+    addEdge(canonId(caller.id), rootId);
   }
   for (const callee of props.callees) {
-    addEdge(props.rootSymbol.id, callee.id);
+    addEdge(rootId, canonId(callee.id));
   }
   if (props.extraEdges) {
     for (const edge of props.extraEdges) {
-      addEdge(edge.sourceId, edge.targetId);
+      addEdge(canonId(edge.sourceId), canonId(edge.targetId));
     }
   }
 

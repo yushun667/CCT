@@ -134,6 +134,19 @@ async function findSymbolAtLine(line: number): Promise<CctSymbol | null> {
   }
 }
 
+/** 按 qualified_name 去重，同名符号优先保留定义（is_definition=true） */
+function deduplicateSymbols(symbols: CctSymbol[]): CctSymbol[] {
+  const map = new Map<string, CctSymbol>();
+  for (const s of symbols) {
+    const key = s.qualified_name;
+    const existing = map.get(key);
+    if (!existing || (!existing.is_definition && s.is_definition)) {
+      map.set(key, s);
+    }
+  }
+  return Array.from(map.values());
+}
+
 async function loadCallGraph(sym: CctSymbol) {
   graphSymbol.value = sym;
   graphVisible.value = true;
@@ -171,12 +184,16 @@ async function loadCallGraph(sym: CctSymbol) {
     }
 
     graphResults.value = {
-      callers: callerRels
-        .map((r) => graphSymMap.get(r.caller_id))
-        .filter((s): s is CctSymbol => s != null),
-      callees: calleeRels
-        .map((r) => graphSymMap.get(r.callee_id))
-        .filter((s): s is CctSymbol => s != null),
+      callers: deduplicateSymbols(
+        callerRels
+          .map((r) => graphSymMap.get(r.caller_id))
+          .filter((s): s is CctSymbol => s != null),
+      ),
+      callees: deduplicateSymbols(
+        calleeRels
+          .map((r) => graphSymMap.get(r.callee_id))
+          .filter((s): s is CctSymbol => s != null),
+      ),
     };
   } catch {
     graphResults.value = { callers: [], callees: [] };
@@ -206,10 +223,10 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
       for (const s of fetched) graphSymMap.set(s.id, s);
     }
 
-    const existingIds = new Set([
-      graphSymbol.value!.id,
-      ...graphResults.value.callers.map((s) => s.id),
-      ...graphResults.value.callees.map((s) => s.id),
+    const existingNames = new Set([
+      graphSymbol.value!.qualified_name,
+      ...graphResults.value.callers.map((s) => s.qualified_name),
+      ...graphResults.value.callees.map((s) => s.qualified_name),
     ]);
 
     const newEdges: GraphEdgeData[] = [];
@@ -221,15 +238,16 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
 
       newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
 
-      if (!existingIds.has(callerSym.id)) {
+      if (!existingNames.has(callerSym.qualified_name)) {
         newCallers.push(callerSym);
-        existingIds.add(callerSym.id);
+        existingNames.add(callerSym.qualified_name);
       }
     }
 
-    if (newCallers.length > 0) {
+    const dedupedCallers = deduplicateSymbols(newCallers);
+    if (dedupedCallers.length > 0) {
       graphResults.value = {
-        callers: [...graphResults.value.callers, ...newCallers],
+        callers: [...graphResults.value.callers, ...dedupedCallers],
         callees: graphResults.value.callees,
       };
     }
@@ -237,7 +255,7 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
       graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
     }
 
-    if (newCallers.length === 0 && newEdges.length === 0) {
+    if (dedupedCallers.length === 0 && newEdges.length === 0) {
       Message.info("未发现更多调用者");
     }
   } catch {
@@ -266,10 +284,10 @@ async function handleQueryNodeCallees(sym: CctSymbol) {
       for (const s of fetched) graphSymMap.set(s.id, s);
     }
 
-    const existingIds = new Set([
-      graphSymbol.value!.id,
-      ...graphResults.value.callers.map((s) => s.id),
-      ...graphResults.value.callees.map((s) => s.id),
+    const existingNames = new Set([
+      graphSymbol.value!.qualified_name,
+      ...graphResults.value.callers.map((s) => s.qualified_name),
+      ...graphResults.value.callees.map((s) => s.qualified_name),
     ]);
 
     const newEdges: GraphEdgeData[] = [];
@@ -281,23 +299,24 @@ async function handleQueryNodeCallees(sym: CctSymbol) {
 
       newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
 
-      if (!existingIds.has(calleeSym.id)) {
+      if (!existingNames.has(calleeSym.qualified_name)) {
         newCallees.push(calleeSym);
-        existingIds.add(calleeSym.id);
+        existingNames.add(calleeSym.qualified_name);
       }
     }
 
-    if (newCallees.length > 0) {
+    const dedupedCallees = deduplicateSymbols(newCallees);
+    if (dedupedCallees.length > 0) {
       graphResults.value = {
         callers: graphResults.value.callers,
-        callees: [...graphResults.value.callees, ...newCallees],
+        callees: [...graphResults.value.callees, ...dedupedCallees],
       };
     }
     if (newEdges.length > 0) {
       graphExtraEdges.value = [...graphExtraEdges.value, ...newEdges];
     }
 
-    if (newCallees.length === 0 && newEdges.length === 0) {
+    if (dedupedCallees.length === 0 && newEdges.length === 0) {
       Message.info("未发现更多被调用者");
     }
   } catch {
