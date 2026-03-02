@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, nextTick, onMounted, onUnmounted } from "vue";
 import { useSettingsStore } from "@/stores/settings";
 import { useEditorStore } from "@/stores/editor";
 import { useProjectStore } from "@/stores/project";
@@ -12,6 +12,8 @@ import AiPanel from "@/components/ai/AiPanel.vue";
 import SplitEditor from "@/components/editor/SplitEditor.vue";
 import WelcomeScreen from "@/components/welcome/WelcomeScreen.vue";
 import TerminalPanel from "@/components/terminal/TerminalPanel.vue";
+import ResultPanel from "@/components/search/ResultPanel.vue";
+import GlobalSearch from "@/components/search/GlobalSearch.vue";
 import SettingsDialog from "@/components/settings/SettingsDialog.vue";
 import ProjectSettingsDialog from "@/components/project/ProjectSettingsDialog.vue";
 import { Message } from "@arco-design/web-vue";
@@ -26,6 +28,8 @@ const settings = useSettingsStore();
 const editorStore = useEditorStore();
 const projectStore = useProjectStore();
 useWindowTitle();
+
+const resultPanelRef = ref<InstanceType<typeof ResultPanel> | null>(null);
 
 // ── 侧边栏拖拽调整宽度 ──────────────────────────────────────
 function onSidebarResizeStart(e: MouseEvent) {
@@ -44,6 +48,26 @@ function onSidebarResizeStart(e: MouseEvent) {
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
   document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+}
+
+// ── 底部面板拖拽调整高度 ─────────────────────────────────────
+function onBottomResizeStart(e: MouseEvent) {
+  const startY = e.clientY;
+  const startHeight = settings.bottomPanelHeight;
+  const onMove = (ev: MouseEvent) => {
+    const newHeight = startHeight - (ev.clientY - startY);
+    settings.bottomPanelHeight = Math.max(100, Math.min(600, newHeight));
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+  document.body.style.cursor = "row-resize";
   document.body.style.userSelect = "none";
 }
 
@@ -201,8 +225,16 @@ async function handleShowCallers(line: number, _col: number) {
   await handleShowCallGraph(line, _col);
 }
 
-function handleFindReferences(_line: number, _col: number) {
-  Message.info("引用查询功能开发中");
+async function handleFindReferences(line: number, _col: number) {
+  const sym = await findSymbolAtLine(line);
+  if (!sym) {
+    Message.warning("未找到当前位置的符号");
+    return;
+  }
+  settings.bottomPanelVisible = true;
+  settings.bottomPanelTab = "references";
+  await nextTick();
+  resultPanelRef.value?.querySymbol(sym.id);
 }
 </script>
 
@@ -247,19 +279,43 @@ function handleFindReferences(_line: number, _col: number) {
           </a-layout-sider>
         </a-layout>
 
-        <!-- 底部面板 -->
+        <!-- 底部面板（终端 + 引用查询） -->
         <div
           v-if="settings.bottomPanelVisible"
           class="bottom-panel"
           :style="{ height: settings.bottomPanelHeight + 'px' }"
         >
-          <TerminalPanel />
+          <div class="bottom-resize-handle" @mousedown.prevent="onBottomResizeStart" />
+          <div class="bottom-panel-header">
+            <div class="bottom-panel-tabs">
+              <div
+                :class="['bp-tab', { active: settings.bottomPanelTab === 'terminal' }]"
+                @click="settings.bottomPanelTab = 'terminal'"
+              >
+                <icon-code-block /> 终端
+              </div>
+              <div
+                :class="['bp-tab', { active: settings.bottomPanelTab === 'references' }]"
+                @click="settings.bottomPanelTab = 'references'"
+              >
+                <icon-find-replace /> 引用
+              </div>
+            </div>
+            <a-button size="mini" type="text" @click="settings.bottomPanelVisible = false">
+              <template #icon><icon-close /></template>
+            </a-button>
+          </div>
+          <div class="bottom-panel-content">
+            <TerminalPanel v-show="settings.bottomPanelTab === 'terminal'" />
+            <ResultPanel v-show="settings.bottomPanelTab === 'references'" ref="resultPanelRef" />
+          </div>
         </div>
       </a-layout>
     </a-layout>
 
     <StatusBar />
 
+    <GlobalSearch />
     <SettingsDialog v-model:visible="showSettings" />
     <ProjectSettingsDialog
       v-if="settingsProject"
@@ -334,5 +390,69 @@ function handleFindReferences(_line: number, _col: number) {
   border-top: 1px solid var(--color-border);
   overflow: hidden;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.bottom-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: row-resize;
+  z-index: 20;
+  transition: background 0.15s;
+}
+
+.bottom-resize-handle:hover,
+.bottom-resize-handle:active {
+  background: rgb(var(--primary-6));
+}
+
+.bottom-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.bottom-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.bp-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--color-text-3);
+  transition: all 0.15s;
+}
+
+.bp-tab:hover {
+  color: var(--color-text-1);
+  background: var(--color-fill-2);
+}
+
+.bp-tab.active {
+  color: var(--color-text-1);
+  background: var(--color-bg-1);
+  font-weight: 500;
+}
+
+.bottom-panel-content {
+  flex: 1;
+  overflow: hidden;
 }
 </style>

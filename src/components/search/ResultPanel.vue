@@ -171,7 +171,25 @@ defineExpose({ querySymbol });
 <style scoped>
 .result-panel {
   height: 100%;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+
+.result-panel :deep(.arco-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.result-panel :deep(.arco-tabs-content) {
+  flex: 1;
+  overflow: hidden;
+}
+
+.result-panel :deep(.arco-tabs-pane) {
+  height: 100%;
+  overflow-y: auto;
 }
 
 .empty {
@@ -184,8 +202,6 @@ defineExpose({ querySymbol });
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 400px;
-  overflow-y: auto;
   padding: 4px;
 }
 

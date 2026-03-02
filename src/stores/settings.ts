@@ -11,6 +11,7 @@ export const useSettingsStore = defineStore("settings", () => {
   const sidebarCollapsed = ref(false);
   const bottomPanelHeight = ref(200);
   const bottomPanelVisible = ref(false);
+  const bottomPanelTab = ref<"terminal" | "references">("terminal");
   const aiPanelWidth = ref(360);
   const aiPanelVisible = ref(false);
 
@@ -41,6 +42,7 @@ export const useSettingsStore = defineStore("settings", () => {
     sidebarCollapsed,
     bottomPanelHeight,
     bottomPanelVisible,
+    bottomPanelTab,
     aiPanelWidth,
     aiPanelVisible,
     setTheme,

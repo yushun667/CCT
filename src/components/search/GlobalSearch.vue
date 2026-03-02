@@ -36,19 +36,16 @@ function close() {
   visible.value = false;
 }
 
-function onKeydown(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key === "p") {
-    e.preventDefault();
-    open();
-  }
+function onOpenSearch() {
+  open();
 }
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown);
+  document.addEventListener("cct:open-search", onOpenSearch);
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("keydown", onKeydown);
+  document.removeEventListener("cct:open-search", onOpenSearch);
   if (debounceTimer) clearTimeout(debounceTimer);
 });
 
