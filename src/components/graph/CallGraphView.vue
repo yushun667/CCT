@@ -116,7 +116,10 @@ function truncate(text: string, max: number): string {
 
 /**
  * 根据源/目标节点中心的相对位置选择最合适的连接桩。
- * 水平差 >= 垂直差时走左右桩，否则走上下桩。
+ *
+ * 采用节点矩形对角线作为判断边界：将水平距离与垂直距离
+ * 按节点宽高比归一化后比较，确保宽矩形的微小垂直偏移
+ * 也能正确触发上下连接桩。
  */
 function choosePorts(
   sx: number,
@@ -126,14 +129,17 @@ function choosePorts(
 ): { sourcePort: string; targetPort: string } {
   const dx = tx - sx;
   const dy = ty - sy;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0
-      ? { sourcePort: "port-right", targetPort: "port-left" }
-      : { sourcePort: "port-left", targetPort: "port-right" };
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+
+  if (absDy * NODE_W > absDx * NODE_H) {
+    return dy >= 0
+      ? { sourcePort: "port-bottom", targetPort: "port-top" }
+      : { sourcePort: "port-top", targetPort: "port-bottom" };
   }
-  return dy >= 0
-    ? { sourcePort: "port-bottom", targetPort: "port-top" }
-    : { sourcePort: "port-top", targetPort: "port-bottom" };
+  return dx >= 0
+    ? { sourcePort: "port-right", targetPort: "port-left" }
+    : { sourcePort: "port-left", targetPort: "port-right" };
 }
 
 /* ---------- 上下文菜单 ---------- */
@@ -334,17 +340,21 @@ function buildGraph() {
   graph.clearCells();
 
   const callerIds = new Set(props.callers.map((s) => s.id));
+  const nodeCenters = new Map<string, { x: number; y: number }>();
 
   for (const [id, sym] of allSymbols) {
     const nd = g.node(nodeKey(id));
     if (!nd) continue;
+
+    const key = nodeKey(id);
+    nodeCenters.set(key, { x: nd.x, y: nd.y });
 
     let kind: "caller" | "root" | "callee" = "callee";
     if (id === props.rootSymbol.id) kind = "root";
     else if (callerIds.has(id)) kind = "caller";
 
     graph.addNode({
-      id: nodeKey(id),
+      id: key,
       x: nd.x - NODE_W / 2,
       y: nd.y - NODE_H / 2,
       width: NODE_W,
@@ -394,17 +404,20 @@ function buildGraph() {
   }
 
   for (const e of g.edges()) {
-    const sn = g.node(e.v);
-    const tn = g.node(e.w);
+    const sp = nodeCenters.get(e.v);
+    const tp = nodeCenters.get(e.w);
     const ports =
-      sn && tn
-        ? choosePorts(sn.x, sn.y, tn.x, tn.y)
+      sp && tp
+        ? choosePorts(sp.x, sp.y, tp.x, tp.y)
         : { sourcePort: "port-right", targetPort: "port-left" };
 
     graph.addEdge({
       source: { cell: e.v, port: ports.sourcePort },
       target: { cell: e.w, port: ports.targetPort },
-      router: { name: "orth" },
+      router: {
+        name: "manhattan",
+        args: { padding: 20 },
+      },
       connector: { name: "rounded", args: { radius: 8 } },
       attrs: {
         line: {
