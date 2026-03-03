@@ -1,16 +1,27 @@
-<script setup lang="ts">
+<script lang="ts">
 /**
  * Dockview 编辑区 — 使用 dockview-vue 管理 Tab 布局
  *
- * 替代原有 SplitEditor + EditorTabs，由 dockview 接管
- * Tab 渲染、拖拽排序、分栏分组、右键菜单等窗口管理职责。
+ * dockview 通过 findComponent 按名称查找已注册组件来渲染面板内容，
+ * 因此必须通过 Options API 的 components 选项注册面板组件。
  */
+import CodeEditorPanel from "./CodeEditorPanel.vue";
+import CallGraphPanel from "./CallGraphPanel.vue";
+
+export default {
+  components: {
+    codeEditor: CodeEditorPanel,
+    callGraph: CallGraphPanel,
+  },
+};
+</script>
+
+<script setup lang="ts">
+import { provide } from "vue";
 import { DockviewVue } from "dockview-vue";
 import type { DockviewReadyEvent } from "dockview-core";
 import "dockview-vue/dist/styles/dockview.css";
 import { useEditorStore } from "@/stores/editor";
-import CodeEditor from "./CodeEditor.vue";
-import CallGraphTab from "@/components/graph/CallGraphTab.vue";
 
 const emit = defineEmits<{
   (e: "show-call-graph", line: number, column: number): void;
@@ -20,6 +31,12 @@ const emit = defineEmits<{
 
 const editorStore = useEditorStore();
 
+provide("editorEmit", {
+  showCallGraph: (line: number, col: number) => emit("show-call-graph", line, col),
+  showCallers: (line: number, col: number) => emit("show-callers", line, col),
+  findReferences: (line: number, col: number) => emit("find-references", line, col),
+});
+
 function onReady(event: DockviewReadyEvent) {
   editorStore.setDockApi(event.api);
 }
@@ -27,28 +44,7 @@ function onReady(event: DockviewReadyEvent) {
 
 <template>
   <div class="dockview-editor dockview-theme-dark">
-    <DockviewVue @ready="onReady">
-      <template #codeEditor="{ params }">
-        <CodeEditor
-          v-if="editorStore.panelDataMap.get(params.panelId)"
-          :file-path="editorStore.panelDataMap.get(params.panelId)!.filePath"
-          :content="editorStore.panelDataMap.get(params.panelId)!.content"
-          :language="editorStore.panelDataMap.get(params.panelId)!.language"
-          :line="editorStore.targetPanelId === params.panelId ? editorStore.targetLine : null"
-          :line-seq="editorStore.targetPanelId === params.panelId ? editorStore.targetLineSeq : 0"
-          @show-call-graph="(l: number, c: number) => emit('show-call-graph', l, c)"
-          @show-callers="(l: number, c: number) => emit('show-callers', l, c)"
-          @find-references="(l: number, c: number) => emit('find-references', l, c)"
-        />
-      </template>
-      <template #callGraph="{ params }">
-        <CallGraphTab
-          v-if="editorStore.panelDataMap.get(params.panelId)?.graphData"
-          :tab-id="params.panelId"
-          :graph-data="editorStore.panelDataMap.get(params.panelId)!.graphData!"
-        />
-      </template>
-    </DockviewVue>
+    <DockviewVue @ready="onReady" />
   </div>
 </template>
 
