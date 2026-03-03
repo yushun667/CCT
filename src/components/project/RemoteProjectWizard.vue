@@ -23,29 +23,51 @@ const testing = ref(false);
 const deploying = ref(false);
 const testResult = ref<boolean | null>(null);
 const remoteDirs = ref<RemoteFileEntry[]>([]);
+const browsingLoading = ref(false);
 const sshStatus = ref<"disconnected" | "connecting" | "connected" | "error">(
   "disconnected",
 );
 
+/** 当前浏览路径的面包屑（用于 VS Code 风格导航） */
+const pathBreadcrumbs = computed(() => {
+  const p = form.remoteRoot || "/";
+  if (p === "/") return [{ path: "/", label: "/" }];
+  const segments = p.split("/").filter(Boolean);
+  return segments.map((_, i) => {
+    const path = "/" + segments.slice(0, i + 1).join("/");
+    return { path, label: segments[i] };
+  });
+});
+
+/** 上级目录路径（用于「上级目录」行） */
+const parentBrowsePath = computed(() => {
+  const p = form.remoteRoot || "/";
+  if (p === "/") return null;
+  const trimmed = p.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  if (idx <= 0) return "/";
+  return trimmed.slice(0, idx) || "/";
+});
+
 const form = reactive({
-  name: "",
   host: "",
   port: 22,
   username: "",
-  authMethod: "key" as "key" | "password" | "agent",
-  keyPath: "",
-  remoteRoot: "/home",
+  authMethod: "key" as "key" | "password",
+  password: "",
+  remoteRoot: "/",
   selectedPath: "",
 });
 
 const canNext = computed(() => {
   switch (currentStep.value) {
-    case 0:
-      return (
-        form.name.trim() !== "" &&
-        form.host.trim() !== "" &&
-        form.username.trim() !== ""
-      );
+    case 0: {
+      const base = form.host.trim() !== "" && form.username.trim() !== "";
+      if (form.authMethod === "password") {
+        return base && form.password.trim() !== "";
+      }
+      return base;
+    }
     case 1:
       return testResult.value === true;
     case 2:
@@ -63,11 +85,8 @@ async function handleTestConnection() {
   sshStatus.value = "connecting";
 
   try {
-    const ok = await projectApi.testSshConnection(
-      form.host,
-      form.port,
-      form.username,
-    );
+    const sshConfig = buildSshConfig();
+    const ok = await projectApi.testSshConnectionWithConfig(sshConfig);
     testResult.value = ok;
     sshStatus.value = ok ? "connected" : "error";
     if (ok) {
@@ -85,26 +104,22 @@ async function handleTestConnection() {
 }
 
 function buildSshConfig(): SSHConfigParam {
-  let authMethod: object | string;
-  if (form.authMethod === "key") {
-    authMethod = {
-      Key: {
-        key_path: form.keyPath || "~/.ssh/id_rsa",
-        passphrase_ref: null,
-      },
-    };
-  } else if (form.authMethod === "password") {
-    authMethod = { Password: { password_ref: "" } };
-  } else {
-    authMethod = "Agent";
-  }
+  const authMethod =
+    form.authMethod === "key"
+      ? {
+          Key: {
+            key_path: "~/.ssh/id_rsa",
+            passphrase_ref: null,
+          },
+        }
+      : { Password: { password_ref: form.password } };
 
   return {
     host: form.host,
     port: form.port,
     username: form.username,
     auth_method: authMethod,
-    key_path: form.keyPath || null,
+    key_path: null,
     auth_ref: "",
     proxy_jump: null,
     keep_alive_interval: 30,
@@ -114,6 +129,7 @@ function buildSshConfig(): SSHConfigParam {
 }
 
 async function handleBrowseDir(path: string) {
+  browsingLoading.value = true;
   try {
     form.remoteRoot = path;
     const sshConfig = buildSshConfig();
@@ -123,14 +139,21 @@ async function handleBrowseDir(path: string) {
     );
   } catch (e) {
     Message.error(String(e));
+  } finally {
+    browsingLoading.value = false;
   }
 }
 
-function handleSelectPath(entry: RemoteFileEntry) {
+/** 点击目录项：仅进入该目录（不设为选中） */
+function handleEnterDir(entry: RemoteFileEntry) {
   if (entry.is_dir) {
-    form.selectedPath = entry.path;
     handleBrowseDir(entry.path);
   }
+}
+
+/** 将当前浏览路径设为选中的项目根目录 */
+function handleSelectCurrentFolder() {
+  form.selectedPath = form.remoteRoot || "/";
 }
 
 async function handleDeploy() {
@@ -149,8 +172,9 @@ async function handleDeploy() {
 function handleNext() {
   if (currentStep.value === 1 && testResult.value !== true) return;
 
-  if (currentStep.value === 2 && remoteDirs.value.length === 0) {
-    handleBrowseDir(form.remoteRoot);
+  if (currentStep.value === 1) {
+    form.remoteRoot = "/";
+    handleBrowseDir("/");
   }
 
   if (currentStep.value < 3) {
@@ -164,11 +188,21 @@ function handlePrev() {
   }
 }
 
+function defaultProjectName(): string {
+  const path = form.selectedPath || form.remoteRoot;
+  const segment = path.split("/").filter(Boolean).pop() || "root";
+  return `${form.host}_${segment}`;
+}
+
 async function handleFinish() {
   try {
     const sshConfig = buildSshConfig();
     const sourceRoot = form.selectedPath || form.remoteRoot;
-    await projectApi.createRemoteProject(form.name, sourceRoot, sshConfig);
+    await projectApi.createRemoteProject(
+      defaultProjectName(),
+      sourceRoot,
+      sshConfig,
+    );
     Message.success(t("remote.createSuccess") || "远程项目创建成功");
     emit("success");
     handleClose();
@@ -184,13 +218,12 @@ function handleClose() {
   testResult.value = null;
   sshStatus.value = "disconnected";
   remoteDirs.value = [];
-  form.name = "";
   form.host = "";
   form.port = 22;
   form.username = "";
   form.authMethod = "key";
-  form.keyPath = "";
-  form.remoteRoot = "/home";
+  form.password = "";
+  form.remoteRoot = "/";
   form.selectedPath = "";
   emit("update:visible", false);
 }
@@ -216,12 +249,6 @@ function handleClose() {
     <!-- Step 1: SSH 连接信息 -->
     <div v-show="currentStep === 0">
       <a-form :model="form" layout="vertical">
-        <a-form-item :label="t('project.name')" required>
-          <a-input
-            v-model="form.name"
-            :placeholder="t('project.namePlaceholder')"
-          />
-        </a-form-item>
         <a-form-item :label="t('remote.host')" required>
           <a-input
             v-model="form.host"
@@ -240,22 +267,25 @@ function handleClose() {
           <a-input
             v-model="form.username"
             :placeholder="t('remote.usernamePlaceholder')"
+            autocapitalize="off"
+            autocomplete="username"
           />
         </a-form-item>
         <a-form-item :label="t('remote.authMethod')">
           <a-radio-group v-model="form.authMethod">
             <a-radio value="key">{{ t("remote.authKey") }}</a-radio>
             <a-radio value="password">{{ t("remote.authPassword") }}</a-radio>
-            <a-radio value="agent">{{ t("remote.authAgent") }}</a-radio>
           </a-radio-group>
         </a-form-item>
         <a-form-item
-          v-if="form.authMethod === 'key'"
-          :label="t('remote.keyPath')"
+          v-if="form.authMethod === 'password'"
+          :label="t('remote.password')"
+          required
         >
-          <a-input
-            v-model="form.keyPath"
-            :placeholder="t('remote.keyPathPlaceholder')"
+          <a-input-password
+            v-model="form.password"
+            :placeholder="t('remote.passwordPlaceholder')"
+            autocomplete="current-password"
           />
         </a-form-item>
       </a-form>
@@ -276,7 +306,11 @@ function handleClose() {
               {{ form.username }}
             </a-descriptions-item>
             <a-descriptions-item :label="t('remote.authMethod')">
-              {{ form.authMethod }}
+              {{
+                form.authMethod === "key"
+                  ? t("remote.authKey")
+                  : t("remote.authPassword")
+              }}
             </a-descriptions-item>
           </a-descriptions>
         </div>
@@ -308,36 +342,81 @@ function handleClose() {
       </div>
     </div>
 
-    <!-- Step 3: 远程目录选择 -->
+    <!-- Step 3: 远程目录选择（VS Code 风格：浏览 + 面包屑 + 选择此目录） -->
     <div v-show="currentStep === 2">
-      <a-form-item :label="t('remote.remotePath')">
-        <a-input v-model="form.remoteRoot" style="margin-bottom: 8px" />
-      </a-form-item>
+      <p class="browse-hint">{{ t("remote.browseFolderHint") }}</p>
+
+      <!-- 面包屑 -->
+      <div class="breadcrumb-wrap">
+        <a-breadcrumb>
+          <a-breadcrumb-item
+            v-for="(crumb, idx) in pathBreadcrumbs"
+            :key="crumb.path"
+          >
+            <span
+              class="breadcrumb-link"
+              @click="handleBrowseDir(crumb.path)"
+            >
+              {{ crumb.label }}
+            </span>
+          </a-breadcrumb-item>
+        </a-breadcrumb>
+      </div>
+
+      <!-- 当前路径 + 选择此目录 -->
+      <div class="current-path-row">
+        <span class="current-path-label">{{ t("remote.remotePath") }}:</span>
+        <span class="current-path-value">{{ form.remoteRoot || "/" }}</span>
+        <a-button type="primary" size="small" @click="handleSelectCurrentFolder">
+          {{ t("remote.selectThisFolder") }}
+        </a-button>
+      </div>
 
       <div v-if="form.selectedPath" class="selected-path">
         <a-tag color="arcoblue">{{ form.selectedPath }}</a-tag>
       </div>
 
-      <a-list :bordered="false" size="small" class="dir-list">
-        <a-list-item
-          v-for="entry in remoteDirs"
-          :key="entry.path"
-          class="dir-item"
-          @click="handleSelectPath(entry)"
-        >
-          <template #meta>
-            <a-list-item-meta>
-              <template #avatar>
-                <icon-folder v-if="entry.is_dir" style="color: var(--color-primary-light-4)" />
-                <icon-file v-else style="color: var(--color-text-3)" />
-              </template>
-              <template #title>
-                <span :class="{ 'dir-name': entry.is_dir }">{{ entry.name }}</span>
-              </template>
-            </a-list-item-meta>
-          </template>
-        </a-list-item>
-      </a-list>
+      <a-spin :loading="browsingLoading" class="dir-list-spin">
+        <a-list :bordered="false" size="small" class="dir-list">
+          <a-list-item
+            v-if="parentBrowsePath !== null"
+            class="dir-item dir-item-parent"
+            @click="handleBrowseDir(parentBrowsePath!)"
+          >
+            <template #meta>
+              <a-list-item-meta>
+                <template #avatar>
+                  <icon-folder style="color: var(--color-text-3)" />
+                </template>
+                <template #title>
+                  <span class="dir-name">{{ t("remote.parentFolder") }}</span>
+                </template>
+              </a-list-item-meta>
+            </template>
+          </a-list-item>
+          <a-list-item
+            v-for="entry in remoteDirs"
+            :key="entry.path"
+            class="dir-item"
+            @click="handleEnterDir(entry)"
+          >
+            <template #meta>
+              <a-list-item-meta>
+                <template #avatar>
+                  <icon-folder
+                    v-if="entry.is_dir"
+                    style="color: var(--color-primary-light-4)"
+                  />
+                  <icon-file v-else style="color: var(--color-text-3)" />
+                </template>
+                <template #title>
+                  <span :class="{ 'dir-name': entry.is_dir }">{{ entry.name }}</span>
+                </template>
+              </a-list-item-meta>
+            </template>
+          </a-list-item>
+        </a-list>
+      </a-spin>
     </div>
 
     <!-- Step 4: Agent 部署 -->
@@ -348,9 +427,6 @@ function handleClose() {
         </a-alert>
 
         <a-descriptions :column="1" size="small" bordered>
-          <a-descriptions-item :label="t('project.name')">
-            {{ form.name }}
-          </a-descriptions-item>
           <a-descriptions-item :label="t('remote.host')">
             {{ form.host }}:{{ form.port }}
           </a-descriptions-item>
@@ -413,13 +489,63 @@ function handleClose() {
   padding: 16px 0;
 }
 
+.browse-hint {
+  color: var(--color-text-3);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.breadcrumb-wrap {
+  margin-bottom: 12px;
+}
+
+.breadcrumb-link {
+  cursor: pointer;
+  color: var(--color-primary-6);
+}
+.breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+.current-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.current-path-label {
+  color: var(--color-text-2);
+  font-size: 12px;
+}
+
+.current-path-value {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .selected-path {
   margin-bottom: 8px;
+}
+
+.dir-list-spin {
+  min-height: 200px;
 }
 
 .dir-list {
   max-height: 300px;
   overflow-y: auto;
+}
+
+.dir-item-parent {
+  color: var(--color-text-3);
 }
 
 .dir-item {

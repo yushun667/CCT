@@ -102,6 +102,15 @@ export async function testSshConnection(
   return invoke<boolean>("test_ssh_connection", { host, port, username });
 }
 
+/** 使用完整 SSH 配置测试连接（支持密钥/密码认证） */
+export async function testSshConnectionWithConfig(
+  sshConfig: SSHConfigParam,
+): Promise<boolean> {
+  return invoke<boolean>("test_ssh_connection_with_config", {
+    sshConfig,
+  });
+}
+
 export interface RemoteFileEntry {
   name: string;
   path: string;

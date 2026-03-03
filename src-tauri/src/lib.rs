@@ -128,6 +128,7 @@ pub fn run() {
             commands::parse::start_incremental_parse,
             commands::parse::get_parse_errors,
             commands::remote::test_ssh_connection,
+            commands::remote::test_ssh_connection_with_config,
             commands::remote::browse_remote_dir,
             commands::remote::deploy_agent,
             commands::remote::get_remote_status,

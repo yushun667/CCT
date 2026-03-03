@@ -7,20 +7,7 @@ use cct_core::models::project::{SSHAuthMethod, SSHConfig};
 use cct_ssh::{AgentRpcClient, SftpClient, SshConnection};
 use tracing::{debug, error, info, warn};
 
-/// 测试 SSH 连接
-///
-/// 创建临时 SSH 配置并尝试建立连接，验证 SSH 可达性。
-/// 使用 Agent 认证方式进行测试。
-///
-/// # 参数
-/// - `host`: SSH 主机地址
-/// - `port`: SSH 端口
-/// - `username`: 用户名
-///
-/// # 返回
-/// - `Ok(true)`: 连接测试成功
-/// - `Ok(false)`: 连接测试失败
-/// - `Err(CctError)`: 参数校验失败
+/// 测试 SSH 连接（仅主机/端口/用户名，仅用于简单可达性检查）
 #[tauri::command]
 pub async fn test_ssh_connection(
     host: String,
@@ -31,16 +18,10 @@ pub async fn test_ssh_connection(
         host = %host, port = port, username = %username,
         "Tauri Command: test_ssh_connection"
     );
-
-    if host.is_empty() {
-        warn!("主机地址为空");
+    if host.is_empty() || username.is_empty() {
+        warn!("主机或用户名为空");
         return Ok(false);
     }
-    if username.is_empty() {
-        warn!("用户名为空");
-        return Ok(false);
-    }
-
     let config = SSHConfig {
         host: host.clone(),
         port,
@@ -48,7 +29,6 @@ pub async fn test_ssh_connection(
         auth_method: SSHAuthMethod::Agent,
         ..Default::default()
     };
-
     match SshConnection::connect(&config).await {
         Ok(mut conn) => {
             info!(host = %host, "SSH 连接测试成功");
@@ -57,6 +37,32 @@ pub async fn test_ssh_connection(
         }
         Err(e) => {
             warn!(host = %host, error = %e, "SSH 连接测试失败");
+            Ok(false)
+        }
+    }
+}
+
+/// 使用完整 SSH 配置测试连接（支持密钥/密码认证）
+#[tauri::command]
+pub async fn test_ssh_connection_with_config(
+    ssh_config: SSHConfig,
+) -> Result<bool, CctError> {
+    info!(
+        host = %ssh_config.host,
+        "Tauri Command: test_ssh_connection_with_config"
+    );
+    if ssh_config.host.is_empty() || ssh_config.username.is_empty() {
+        warn!("主机或用户名为空");
+        return Ok(false);
+    }
+    match SshConnection::connect(&ssh_config).await {
+        Ok(mut conn) => {
+            info!(host = %ssh_config.host, "SSH 连接测试成功");
+            let _ = conn.disconnect().await;
+            Ok(true)
+        }
+        Err(e) => {
+            warn!(host = %ssh_config.host, error = %e, "SSH 连接测试失败");
             Ok(false)
         }
     }

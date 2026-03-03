@@ -66,18 +66,17 @@ const progressText = computed(() => {
 <template>
   <div class="status-bar">
     <div class="status-left">
-      <!-- 远程连接 -->
+      <!-- 远程连接（仅图标） -->
       <a-tooltip :content="t('project.newRemote')" position="top" mini>
-        <a-button
-          type="text"
-          size="mini"
+        <span
+          role="button"
+          tabindex="0"
           class="status-icon-btn"
           @click="openRemoteWizard"
+          @keydown.enter.prevent="openRemoteWizard"
         >
-          <template #icon>
-            <MdiSsh class="status-ssh-icon" />
-          </template>
-        </a-button>
+          <MdiSsh class="status-ssh-icon" />
+        </span>
       </a-tooltip>
 
       <!-- 解析状态 -->
@@ -118,16 +117,16 @@ const progressText = computed(() => {
         {{ projectStore.currentProject.name }}
       </span>
 
-      <a-button
-        size="mini"
-        type="text"
+      <span
+        role="button"
+        tabindex="0"
+        class="status-icon-btn"
         @click="settings.toggleBottomPanel()"
+        @keydown.enter.prevent="settings.toggleBottomPanel()"
       >
-        <template #icon>
-          <icon-up v-if="!settings.bottomPanelVisible" />
-          <icon-down v-else />
-        </template>
-      </a-button>
+        <icon-up v-if="!settings.bottomPanelVisible" />
+        <icon-down v-else />
+      </span>
       <span class="status-item">v0.1.0</span>
     </div>
   </div>
@@ -160,8 +159,14 @@ const progressText = computed(() => {
 }
 
 .status-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-3);
   padding: 0 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s;
 }
 .status-icon-btn:hover {
   color: var(--color-text-1);
