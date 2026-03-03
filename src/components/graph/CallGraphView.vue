@@ -1,13 +1,13 @@
 <script setup lang="ts">
 /**
- * 可视化调用图 — 使用 dagre 横向布局 + SVG 渲染
+ * 可视化调用图 — 基于 @antv/x6 框架 + dagre 横向布局
  *
  * 中心节点为当前选中的函数，左侧为调用者（callers），右侧为被调用者（callees）。
- * 每个节点显示函数名 + 文件名:行号。
- *
- * 交互：单击选中节点，双击跳转代码，右键菜单查询调用者/被调用者（1层，增量追加）。
+ * 每个节点带有上下左右四个固定连接桩，边使用正交路由 + 圆弧转角。
+ * 支持：节点拖拽、滚轮缩放、画布平移、单击选中、双击跳转、右键菜单。
  */
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { Graph } from "@antv/x6";
 import dagre from "@dagrejs/dagre";
 import type { Symbol as CctSymbol } from "@/api/types";
 
@@ -29,90 +29,184 @@ const emit = defineEmits<{
   (e: "query-callees", sym: CctSymbol): void;
 }>();
 
-interface LayoutNode {
-  id: string;
-  sym: CctSymbol;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  isRoot: boolean;
-  kind: "caller" | "root" | "callee";
-}
-
-interface LayoutEdge {
-  from: string;
-  to: string;
-}
-
 const NODE_W = 280;
 const NODE_H = 48;
-const PORT_R = 3;
-const nodes = ref<LayoutNode[]>([]);
-const edges = ref<LayoutEdge[]>([]);
-const svgWidth = ref(800);
-const svgHeight = ref(600);
 
-const baseBox = computed(() => {
-  const pad = 40;
-  if (nodes.value.length === 0) {
-    return { x: 0, y: 0, w: svgWidth.value, h: svgHeight.value };
-  }
-  let minX = Infinity,
-    minY = Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-  for (const n of nodes.value) {
-    minX = Math.min(minX, n.x - n.width / 2);
-    minY = Math.min(minY, n.y - n.height / 2);
-    maxX = Math.max(maxX, n.x + n.width / 2);
-    maxY = Math.max(maxY, n.y + n.height / 2);
-  }
-  return {
-    x: minX - pad,
-    y: minY - pad,
-    w: maxX - minX + pad * 2,
-    h: maxY - minY + pad * 2,
-  };
-});
+const containerRef = ref<HTMLDivElement | null>(null);
+let graph: Graph | null = null;
 
-/** 通过 viewBox 实现缩放和平移，保持 SVG 矢量清晰度 */
-const viewBox = computed(() => {
-  const b = baseBox.value;
-  const vw = b.w / scale.value;
-  const vh = b.h / scale.value;
-  const cx = b.x + b.w / 2 - pan.value.x;
-  const cy = b.y + b.h / 2 - pan.value.y;
-  return `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`;
-});
-
-const nodeMap = computed(() => {
-  const map = new Map<string, LayoutNode>();
-  for (const n of nodes.value) map.set(n.id, n);
-  return map;
-});
-
-const pan = ref({ x: 0, y: 0 });
-const scale = ref(1);
-const dragging = ref(false);
-const dragStart = ref({ x: 0, y: 0 });
-const hoveredNode = ref<string | null>(null);
-const selectedNode = ref<string | null>(null);
-const svgRef = ref<SVGSVGElement | null>(null);
-
+const selectedNodeId = ref<string | null>(null);
 const contextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
-  node: null as LayoutNode | null,
+  sym: null as CctSymbol | null,
 });
 
-function buildLayout() {
+/* ---------- 连接桩配置 ---------- */
+
+const portAttrs = {
+  circle: {
+    r: 3,
+    fill: "rgba(255,255,255,0.9)",
+    stroke: "rgba(0,0,0,0.25)",
+    strokeWidth: 1,
+    magnet: false,
+  },
+};
+
+const portGroups: Record<string, object> = {
+  left: { position: "left", attrs: portAttrs },
+  right: { position: "right", attrs: portAttrs },
+  top: { position: "top", attrs: portAttrs },
+  bottom: { position: "bottom", attrs: portAttrs },
+};
+
+const portItems = [
+  { group: "left", id: "port-left" },
+  { group: "right", id: "port-right" },
+  { group: "top", id: "port-top" },
+  { group: "bottom", id: "port-bottom" },
+];
+
+/* ---------- 辅助函数 ---------- */
+
+function nodeColor(kind: string): string {
+  if (kind === "root") return "#1890ff";
+  if (kind === "caller") return "#52c41a";
+  return "#fa8c16";
+}
+
+function nodeBorderColor(kind: string): string {
+  if (kind === "root") return "#096dd9";
+  if (kind === "caller") return "#389e0d";
+  return "#d46b08";
+}
+
+function shortFile(filePath: string): string {
+  return filePath.split("/").pop() ?? filePath;
+}
+
+/**
+ * 从 qualified_name 提取简短的限定名用于节点显示。
+ * 例如 "clang::CodeGen::CodeGenTypes::getLLVMContext" → "CodeGenTypes::getLLVMContext"
+ * 保留最后两级以区分同名但不同类的方法。
+ */
+function shortQualifiedName(sym: CctSymbol): string {
+  const parts = sym.qualified_name.split("::");
+  if (parts.length <= 2) return sym.qualified_name;
+  return parts.slice(-2).join("::");
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max - 2) + "\u2026" : text;
+}
+
+/* ---------- 选中管理 ---------- */
+
+function selectNode(id: string | null) {
+  if (!graph) return;
+
+  if (selectedNodeId.value) {
+    const prev = graph.getCellById(selectedNodeId.value);
+    if (prev?.isNode()) {
+      const kind = (prev.getData()?.kind as string) ?? "callee";
+      prev.attr("body/stroke", nodeBorderColor(kind));
+      prev.attr("body/strokeWidth", 1.5);
+    }
+  }
+
+  selectedNodeId.value = id;
+
+  if (id) {
+    const node = graph.getCellById(id);
+    if (node?.isNode()) {
+      node.attr("body/stroke", "#fff");
+      node.attr("body/strokeWidth", 2.5);
+    }
+  }
+}
+
+function closeContextMenu() {
+  contextMenu.value.visible = false;
+  contextMenu.value.sym = null;
+}
+
+function onCtxQueryCallers() {
+  if (contextMenu.value.sym) emit("query-callers", contextMenu.value.sym);
+  closeContextMenu();
+}
+
+function onCtxQueryCallees() {
+  if (contextMenu.value.sym) emit("query-callees", contextMenu.value.sym);
+  closeContextMenu();
+}
+
+function onCtxNavigate() {
+  if (contextMenu.value.sym) emit("navigate", contextMenu.value.sym);
+  closeContextMenu();
+}
+
+/* ---------- 初始化 X6 图实例 ---------- */
+
+function initGraph() {
+  if (!containerRef.value) return;
+
+  graph = new Graph({
+    container: containerRef.value,
+    autoResize: true,
+    panning: { enabled: true },
+    mousewheel: {
+      enabled: true,
+      zoomAtMousePosition: true,
+      minScale: 0.1,
+      maxScale: 10,
+    },
+    interacting: { nodeMovable: true },
+  });
+
+  graph.on("node:click", ({ node }) => {
+    selectNode(node.id);
+    closeContextMenu();
+  });
+
+  graph.on("node:dblclick", ({ node }) => {
+    const sym = node.getData()?.sym as CctSymbol | undefined;
+    if (sym) emit("navigate", sym);
+  });
+
+  graph.on("node:contextmenu", ({ e, node }) => {
+    e.preventDefault();
+    selectNode(node.id);
+    contextMenu.value = {
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      sym: (node.getData()?.sym as CctSymbol) ?? null,
+    };
+  });
+
+  graph.on("blank:click", () => {
+    selectNode(null);
+    closeContextMenu();
+  });
+
+  graph.on("blank:contextmenu", ({ e }) => {
+    e.preventDefault();
+    closeContextMenu();
+  });
+}
+
+/* ---------- 使用 dagre 布局并渲染到 X6 ---------- */
+
+function buildGraph() {
+  if (!graph) return;
+
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: "LR",
     nodesep: 30,
-    ranksep: 60,
+    ranksep: 80,
     marginx: 20,
     marginy: 20,
   });
@@ -147,9 +241,10 @@ function buildLayout() {
 
   dagre.layout(g);
 
-  const layoutNodes: LayoutNode[] = [];
+  graph.clearCells();
+  selectedNodeId.value = null;
+
   const callerIds = new Set(props.callers.map((s) => s.id));
-  const calleeIds = new Set(props.callees.map((s) => s.id));
 
   for (const [id, sym] of allSymbols) {
     const nd = g.node(nodeKey(id));
@@ -159,218 +254,101 @@ function buildLayout() {
     if (id === props.rootSymbol.id) kind = "root";
     else if (callerIds.has(id)) kind = "caller";
 
-    layoutNodes.push({
+    graph.addNode({
       id: nodeKey(id),
-      sym,
-      x: nd.x,
-      y: nd.y,
+      x: nd.x - NODE_W / 2,
+      y: nd.y - NODE_H / 2,
       width: NODE_W,
       height: NODE_H,
-      isRoot: id === props.rootSymbol.id,
-      kind,
+      data: { sym, kind },
+      markup: [
+        { tagName: "rect", selector: "body" },
+        { tagName: "text", selector: "label" },
+        { tagName: "text", selector: "sublabel" },
+      ],
+      attrs: {
+        body: {
+          width: NODE_W,
+          height: NODE_H,
+          rx: 6,
+          ry: 6,
+          fill: nodeColor(kind),
+          stroke: nodeBorderColor(kind),
+          strokeWidth: 1.5,
+          opacity: 0.9,
+          cursor: "pointer",
+        },
+        label: {
+          text: truncate(shortQualifiedName(sym), 32),
+          x: NODE_W / 2,
+          y: 18,
+          fill: "#fff",
+          fontSize: 12,
+          fontWeight: "600",
+          fontFamily: "Menlo, Monaco, monospace",
+          textAnchor: "middle",
+        },
+        sublabel: {
+          text: `${shortFile(sym.file_path)}:${sym.line}`,
+          x: NODE_W / 2,
+          y: 36,
+          fill: "rgba(255,255,255,0.75)",
+          fontSize: 10,
+          fontFamily: "Menlo, Monaco, monospace",
+          textAnchor: "middle",
+        },
+      },
+      ports: { groups: portGroups, items: portItems },
     });
   }
 
-  const layoutEdges: LayoutEdge[] = [];
   for (const e of g.edges()) {
-    layoutEdges.push({ from: e.v, to: e.w });
+    graph.addEdge({
+      source: { cell: e.v, port: "port-right" },
+      target: { cell: e.w, port: "port-left" },
+      router: { name: "orth" },
+      connector: { name: "rounded", args: { radius: 8 } },
+      attrs: {
+        line: {
+          stroke: "#555",
+          strokeWidth: 1.5,
+          opacity: 0.6,
+          targetMarker: { name: "block", width: 8, height: 6 },
+        },
+      },
+    });
   }
 
-  nodes.value = layoutNodes;
-  edges.value = layoutEdges;
-}
-
-/**
- * 在源节点右端口与目标节点左端口之间生成正交折线路径，
- * 折弯处使用半径 r 的圆弧平滑过渡。
- */
-function orthogonalEdgePath(fromId: string, toId: string): string {
-  const source = nodeMap.value.get(fromId);
-  const target = nodeMap.value.get(toId);
-  if (!source || !target) return "";
-
-  const sx = source.x + source.width / 2;
-  const sy = source.y;
-  const ex = target.x - target.width / 2;
-  const ey = target.y;
-
-  if (Math.abs(sy - ey) < 1) return `M ${sx} ${sy} L ${ex} ${ey}`;
-
-  const midX = (sx + ex) / 2;
-  const dy = ey - sy;
-  const signY = dy > 0 ? 1 : -1;
-  const r = Math.min(
-    8,
-    Math.abs(midX - sx) - 1,
-    Math.abs(ex - midX) - 1,
-    Math.abs(dy) / 2,
-  );
-
-  if (r < 1) {
-    return `M ${sx} ${sy} L ${midX} ${sy} L ${midX} ${ey} L ${ex} ${ey}`;
-  }
-
-  const sweep = signY > 0 ? 1 : 0;
-  return [
-    `M ${sx} ${sy}`,
-    `L ${midX - r} ${sy}`,
-    `A ${r} ${r} 0 0 ${sweep} ${midX} ${sy + signY * r}`,
-    `L ${midX} ${ey - signY * r}`,
-    `A ${r} ${r} 0 0 ${sweep} ${midX + r} ${ey}`,
-    `L ${ex} ${ey}`,
-  ].join(" ");
-}
-
-function nodeColor(kind: string): string {
-  if (kind === "root") return "#1890ff";
-  if (kind === "caller") return "#52c41a";
-  return "#fa8c16";
-}
-
-function nodeBorderColor(kind: string): string {
-  if (kind === "root") return "#096dd9";
-  if (kind === "caller") return "#389e0d";
-  return "#d46b08";
-}
-
-function shortFile(filePath: string): string {
-  return filePath.split("/").pop() ?? filePath;
-}
-
-/**
- * 从 qualified_name 提取简短的限定名用于节点显示。
- * 例如 "clang::CodeGen::CodeGenTypes::getLLVMContext" → "CodeGenTypes::getLLVMContext"
- * 保留最后两级以区分同名但不同类的方法。
- */
-function shortQualifiedName(sym: CctSymbol): string {
-  const parts = sym.qualified_name.split("::");
-  if (parts.length <= 2) return sym.qualified_name;
-  return parts.slice(-2).join("::");
-}
-
-function isSelected(nodeId: string): boolean {
-  return selectedNode.value === nodeId;
-}
-
-function handleNodeClick(node: LayoutNode, e: MouseEvent) {
-  e.stopPropagation();
-  selectedNode.value = node.id;
-  closeContextMenu();
-}
-
-function handleNodeDblClick(node: LayoutNode) {
-  emit("navigate", node.sym);
-}
-
-function handleNodeContextMenu(node: LayoutNode, e: MouseEvent) {
-  e.preventDefault();
-  e.stopPropagation();
-  selectedNode.value = node.id;
-  contextMenu.value = {
-    visible: true,
-    x: e.clientX,
-    y: e.clientY,
-    node,
-  };
-}
-
-function closeContextMenu() {
-  contextMenu.value.visible = false;
-  contextMenu.value.node = null;
-}
-
-function onCtxQueryCallers() {
-  const node = contextMenu.value.node;
-  if (node) emit("query-callers", node.sym);
-  closeContextMenu();
-}
-
-function onCtxQueryCallees() {
-  const node = contextMenu.value.node;
-  if (node) emit("query-callees", node.sym);
-  closeContextMenu();
-}
-
-function onCtxNavigate() {
-  const node = contextMenu.value.node;
-  if (node) emit("navigate", node.sym);
-  closeContextMenu();
-}
-
-function handleBgClick() {
-  selectedNode.value = null;
-  closeContextMenu();
-}
-
-function handleWheel(e: WheelEvent) {
-  e.preventDefault();
-  const factor = e.deltaY > 0 ? 0.9 : 1.1;
-  const newScale = Math.max(0.1, Math.min(10, scale.value * factor));
-  if (svgRef.value) {
-    const rect = svgRef.value.getBoundingClientRect();
-    const b = baseBox.value;
-    const vw = b.w / scale.value;
-    const vh = b.h / scale.value;
-    const newVw = b.w / newScale;
-    const newVh = b.h / newScale;
-    const fracX = (e.clientX - rect.left) / rect.width;
-    const fracY = (e.clientY - rect.top) / rect.height;
-    pan.value = {
-      x: pan.value.x + (vw - newVw) * (0.5 - fracX),
-      y: pan.value.y + (vh - newVh) * (0.5 - fracY),
-    };
-  }
-  scale.value = newScale;
-}
-
-function handleMouseDown(e: MouseEvent) {
-  if (e.button === 0) {
-    dragging.value = true;
-    dragStart.value = { x: e.clientX, y: e.clientY };
-  }
-}
-
-function handleMouseMove(e: MouseEvent) {
-  if (!dragging.value || !svgRef.value) return;
-  const rect = svgRef.value.getBoundingClientRect();
-  const b = baseBox.value;
-  const vw = b.w / scale.value;
-  const vh = b.h / scale.value;
-  const dx = ((e.clientX - dragStart.value.x) / rect.width) * vw;
-  const dy = ((e.clientY - dragStart.value.y) / rect.height) * vh;
-  pan.value = { x: pan.value.x + dx, y: pan.value.y + dy };
-  dragStart.value = { x: e.clientX, y: e.clientY };
-}
-
-function handleMouseUp() {
-  dragging.value = false;
+  graph.centerContent();
 }
 
 function resetView() {
-  pan.value = { x: 0, y: 0 };
-  scale.value = 1;
+  if (!graph) return;
+  graph.zoomTo(1);
+  graph.centerContent();
 }
+
+onMounted(() => {
+  initGraph();
+  nextTick(() => buildGraph());
+});
+
+onBeforeUnmount(() => {
+  graph?.dispose();
+  graph = null;
+});
 
 watch(
   () => [props.rootSymbol, props.callers, props.callees, props.extraEdges],
   () => {
-    nextTick(() => buildLayout());
+    nextTick(() => buildGraph());
   },
-  { immediate: true, deep: true },
+  { deep: true },
 );
 </script>
 
 <template>
-  <div
-    class="call-graph-view"
-    @wheel.prevent="handleWheel"
-    @mousedown="handleMouseDown"
-    @mousemove="handleMouseMove"
-    @mouseup="handleMouseUp"
-    @mouseleave="handleMouseUp"
-    @click="handleBgClick"
-    @contextmenu.prevent="closeContextMenu"
-  >
+  <div class="call-graph-view" @contextmenu.prevent>
     <div class="graph-toolbar">
       <span class="graph-legend">
         <span class="legend-dot" style="background: #52c41a" /> 调用者
@@ -378,133 +356,14 @@ watch(
         <span class="legend-dot" style="background: #fa8c16" /> 被调用
       </span>
       <span class="graph-hint">
-        单击选中 · 双击跳转 · 右键查询 · 滚轮缩放 · 拖拽平移
+        单击选中 · 双击跳转 · 右键查询 · 滚轮缩放 · 拖拽平移/移动节点
       </span>
       <a-button size="mini" type="text" @click.stop="resetView">
         重置视图
       </a-button>
     </div>
 
-    <svg
-      ref="svgRef"
-      class="graph-svg"
-      :viewBox="viewBox"
-      preserveAspectRatio="xMidYMid meet"
-      :style="{ cursor: dragging ? 'grabbing' : 'grab' }"
-    >
-      <defs>
-        <marker
-          id="arrowhead"
-          markerWidth="8"
-          markerHeight="6"
-          refX="8"
-          refY="3"
-          orient="auto"
-        >
-          <polygon points="0 0, 8 3, 0 6" fill="#666" />
-        </marker>
-      </defs>
-
-      <!-- 边 -->
-      <g class="edges">
-        <path
-          v-for="(edge, idx) in edges"
-          :key="idx"
-          :d="orthogonalEdgePath(edge.from, edge.to)"
-          fill="none"
-          stroke="#555"
-          stroke-width="1.5"
-          marker-end="url(#arrowhead)"
-          opacity="0.6"
-        />
-      </g>
-
-      <!-- 节点 -->
-      <g
-        v-for="node in nodes"
-        :key="node.id"
-        class="graph-node"
-        :transform="`translate(${node.x - node.width / 2}, ${node.y - node.height / 2})`"
-        @click="handleNodeClick(node, $event)"
-        @dblclick.stop="handleNodeDblClick(node)"
-        @contextmenu="handleNodeContextMenu(node, $event)"
-        @mouseenter="hoveredNode = node.id"
-        @mouseleave="hoveredNode = null"
-        style="cursor: pointer"
-      >
-        <!-- 选中高亮光圈 -->
-        <rect
-          v-if="isSelected(node.id)"
-          :x="-3"
-          :y="-3"
-          :width="node.width + 6"
-          :height="node.height + 6"
-          :rx="8"
-          :ry="8"
-          fill="none"
-          stroke="#fff"
-          stroke-width="2"
-          opacity="0.8"
-        />
-        <rect
-          :width="node.width"
-          :height="node.height"
-          :rx="6"
-          :ry="6"
-          :fill="nodeColor(node.kind)"
-          :stroke="
-            isSelected(node.id)
-              ? '#fff'
-              : hoveredNode === node.id
-                ? '#ddd'
-                : nodeBorderColor(node.kind)
-          "
-          :stroke-width="isSelected(node.id) ? 2.5 : hoveredNode === node.id ? 2 : 1.5"
-          :opacity="isSelected(node.id) || hoveredNode === node.id ? 1 : 0.9"
-        />
-        <text
-          :x="node.width / 2"
-          :y="18"
-          text-anchor="middle"
-          fill="#fff"
-          font-size="12"
-          font-weight="600"
-          font-family="Menlo, Monaco, monospace"
-        >
-          {{
-            shortQualifiedName(node.sym).length > 32
-              ? shortQualifiedName(node.sym).slice(0, 30) + "\u2026"
-              : shortQualifiedName(node.sym)
-          }}
-        </text>
-        <text
-          :x="node.width / 2"
-          :y="36"
-          text-anchor="middle"
-          fill="rgba(255,255,255,0.75)"
-          font-size="10"
-          font-family="Menlo, Monaco, monospace"
-        >
-          {{ shortFile(node.sym.file_path) }}:{{ node.sym.line }}
-        </text>
-        <!-- 上下左右四个固定连接桩 -->
-        <circle cx="0" :cy="node.height / 2" :r="PORT_R" class="port" />
-        <circle :cx="node.width" :cy="node.height / 2" :r="PORT_R" class="port" />
-        <circle :cx="node.width / 2" cy="0" :r="PORT_R" class="port" />
-        <circle :cx="node.width / 2" :cy="node.height" :r="PORT_R" class="port" />
-      </g>
-
-      <text
-        v-if="nodes.length === 0"
-        x="50%"
-        y="50%"
-        text-anchor="middle"
-        fill="#999"
-        font-size="14"
-      >
-        暂无调用关系数据
-      </text>
-    </svg>
+    <div ref="containerRef" class="graph-container" />
 
     <!-- 右键菜单 -->
     <Teleport to="body">
@@ -583,19 +442,9 @@ watch(
   border: 1px solid var(--color-border);
 }
 
-.graph-svg {
+.graph-container {
   width: 100%;
   height: 100%;
-}
-
-.graph-node:hover rect {
-  filter: brightness(1.15);
-}
-
-.port {
-  fill: rgba(255, 255, 255, 0.9);
-  stroke: rgba(0, 0, 0, 0.25);
-  stroke-width: 1;
 }
 </style>
 
