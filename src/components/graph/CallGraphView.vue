@@ -4,10 +4,18 @@
  *
  * 中心节点为当前选中的函数，左侧为调用者（callers），右侧为被调用者（callees）。
  * 每个节点带有上下左右四个固定连接桩，边使用正交路由 + 圆弧转角。
- * 支持：节点拖拽、滚轮缩放、画布平移、单击选中、双击跳转、右键菜单。
+ *
+ * 交互：
+ *   单击节点 — 选中       Ctrl/Meta+点击 — 多选切换
+ *   框选拖拽 — 批量选中    双击节点 — 跳转代码
+ *   右键节点 — 查询菜单    Delete/Backspace — 删除选中
+ *   拖拽节点 — 移动位置（带对齐辅助线）
+ *   滚轮 — 缩放            Shift+拖拽空白 — 平移画布
  */
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { Graph } from "@antv/x6";
+import { Snapline } from "@antv/x6-plugin-snapline";
+import { Selection } from "@antv/x6-plugin-selection";
 import dagre from "@dagrejs/dagre";
 import type { Symbol as CctSymbol } from "@/api/types";
 
@@ -35,7 +43,6 @@ const NODE_H = 48;
 const containerRef = ref<HTMLDivElement | null>(null);
 let graph: Graph | null = null;
 
-const selectedNodeId = ref<string | null>(null);
 const contextMenu = ref({
   visible: false,
   x: 0,
@@ -102,30 +109,7 @@ function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 2) + "\u2026" : text;
 }
 
-/* ---------- 选中管理 ---------- */
-
-function selectNode(id: string | null) {
-  if (!graph) return;
-
-  if (selectedNodeId.value) {
-    const prev = graph.getCellById(selectedNodeId.value);
-    if (prev?.isNode()) {
-      const kind = (prev.getData()?.kind as string) ?? "callee";
-      prev.attr("body/stroke", nodeBorderColor(kind));
-      prev.attr("body/strokeWidth", 1.5);
-    }
-  }
-
-  selectedNodeId.value = id;
-
-  if (id) {
-    const node = graph.getCellById(id);
-    if (node?.isNode()) {
-      node.attr("body/stroke", "#fff");
-      node.attr("body/strokeWidth", 2.5);
-    }
-  }
-}
+/* ---------- 上下文菜单 ---------- */
 
 function closeContextMenu() {
   contextMenu.value.visible = false;
@@ -147,6 +131,51 @@ function onCtxNavigate() {
   closeContextMenu();
 }
 
+/* ---------- 删除选中节点及其关联边 ---------- */
+
+function deleteSelected() {
+  if (!graph) return;
+  const selected = graph.getSelectedCells();
+  if (selected.length === 0) return;
+
+  const nodeIds = new Set(
+    selected.filter((c) => c.isNode()).map((c) => c.id),
+  );
+
+  const toRemove = [...selected];
+  for (const edge of graph.getEdges()) {
+    const src =
+      typeof edge.getSourceCellId === "function"
+        ? edge.getSourceCellId()
+        : (edge.getSource() as { cell?: string })?.cell;
+    const tgt =
+      typeof edge.getTargetCellId === "function"
+        ? edge.getTargetCellId()
+        : (edge.getTarget() as { cell?: string })?.cell;
+    if ((src && nodeIds.has(src)) || (tgt && nodeIds.has(tgt))) {
+      if (!toRemove.includes(edge)) toRemove.push(edge);
+    }
+  }
+
+  graph.removeCells(toRemove);
+}
+
+function onCtxDelete() {
+  deleteSelected();
+  closeContextMenu();
+}
+
+/* ---------- 键盘事件 ---------- */
+
+function handleKeyDown(e: KeyboardEvent) {
+  if (e.key === "Delete" || e.key === "Backspace") {
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    e.preventDefault();
+    deleteSelected();
+  }
+}
+
 /* ---------- 初始化 X6 图实例 ---------- */
 
 function initGraph() {
@@ -155,7 +184,10 @@ function initGraph() {
   graph = new Graph({
     container: containerRef.value,
     autoResize: true,
-    panning: { enabled: true },
+    panning: {
+      enabled: true,
+      modifiers: "shift",
+    },
     mousewheel: {
       enabled: true,
       zoomAtMousePosition: true,
@@ -165,10 +197,26 @@ function initGraph() {
     interacting: { nodeMovable: true },
   });
 
-  graph.on("node:click", ({ node }) => {
-    selectNode(node.id);
-    closeContextMenu();
-  });
+  graph.use(
+    new Snapline({
+      enabled: true,
+      tolerance: 10,
+    }),
+  );
+
+  graph.use(
+    new Selection({
+      enabled: true,
+      rubberband: true,
+      rubberNode: true,
+      rubberEdge: false,
+      multiple: true,
+      multipleSelectionModifiers: ["ctrl", "meta"],
+      movable: true,
+      strict: false,
+      showNodeSelectionBox: true,
+    }),
+  );
 
   graph.on("node:dblclick", ({ node }) => {
     const sym = node.getData()?.sym as CctSymbol | undefined;
@@ -177,7 +225,7 @@ function initGraph() {
 
   graph.on("node:contextmenu", ({ e, node }) => {
     e.preventDefault();
-    selectNode(node.id);
+    graph!.select(node);
     contextMenu.value = {
       visible: true,
       x: e.clientX,
@@ -187,7 +235,6 @@ function initGraph() {
   });
 
   graph.on("blank:click", () => {
-    selectNode(null);
     closeContextMenu();
   });
 
@@ -195,6 +242,8 @@ function initGraph() {
     e.preventDefault();
     closeContextMenu();
   });
+
+  document.addEventListener("keydown", handleKeyDown);
 }
 
 /* ---------- 使用 dagre 布局并渲染到 X6 ---------- */
@@ -242,7 +291,6 @@ function buildGraph() {
   dagre.layout(g);
 
   graph.clearCells();
-  selectedNodeId.value = null;
 
   const callerIds = new Set(props.callers.map((s) => s.id));
 
@@ -334,6 +382,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("keydown", handleKeyDown);
   graph?.dispose();
   graph = null;
 });
@@ -356,7 +405,8 @@ watch(
         <span class="legend-dot" style="background: #fa8c16" /> 被调用
       </span>
       <span class="graph-hint">
-        单击选中 · 双击跳转 · 右键查询 · 滚轮缩放 · 拖拽平移/移动节点
+        框选/点击选中 · 双击跳转 · 右键菜单 · 滚轮缩放 · Shift+拖拽平移 ·
+        Delete 删除
       </span>
       <a-button size="mini" type="text" @click.stop="resetView">
         重置视图
@@ -384,6 +434,11 @@ watch(
         <div class="ctx-item" @click="onCtxNavigate">
           <icon-code />
           跳转到代码
+        </div>
+        <div class="ctx-divider" />
+        <div class="ctx-item ctx-danger" @click="onCtxDelete">
+          <icon-delete />
+          删除选中节点
         </div>
       </div>
     </Teleport>
@@ -473,6 +528,14 @@ watch(
 
 .ctx-item:hover {
   background: var(--color-fill-2, #f2f3f5);
+}
+
+.ctx-danger {
+  color: #f53f3f;
+}
+
+.ctx-danger:hover {
+  background: #fff1f0;
 }
 
 .ctx-divider {
