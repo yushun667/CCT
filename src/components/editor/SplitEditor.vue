@@ -13,6 +13,8 @@ import CodeEditor from "./CodeEditor.vue";
 import WelcomeScreen from "@/components/welcome/WelcomeScreen.vue";
 import CallGraphTab from "@/components/graph/CallGraphTab.vue";
 
+const DND_MIME = "application/x-editor-tab";
+
 const emit = defineEmits<{
   (e: "show-call-graph", line: number, column: number): void;
   (e: "show-callers", line: number, column: number): void;
@@ -68,6 +70,16 @@ const leftFiles = computed(() => editorStore.getPaneFiles(0));
 const rightFiles = computed(() => editorStore.splitMode ? editorStore.getPaneFiles(1) : []);
 const leftActiveFile = computed(() => editorStore.getPaneActiveFile(0));
 const rightActiveFile = computed(() => editorStore.getPaneActiveFile(1));
+
+function onPaneDrop(paneIdx: number, event: DragEvent) {
+  event.preventDefault();
+  if (!event.dataTransfer) return;
+  const raw = event.dataTransfer.getData(DND_MIME);
+  if (!raw) return;
+  const data: { paneIndex: number; fileIndex: number } = JSON.parse(raw);
+  if (data.paneIndex === paneIdx) return;
+  editorStore.moveToPane(data.paneIndex, paneIdx, data.fileIndex);
+}
 </script>
 
 <template>
@@ -81,7 +93,11 @@ const rightActiveFile = computed(() => editorStore.getPaneActiveFile(1));
     >
       <template v-if="leftFiles.length > 0">
         <EditorTabs :pane-index="0" />
-        <div class="pane-content">
+        <div
+          class="pane-content"
+          @dragover.prevent
+          @drop.prevent="onPaneDrop(0, $event)"
+        >
           <CallGraphTab
             v-if="leftActiveFile?.type === 'call-graph' && leftActiveFile.graphData"
             :tab-id="leftActiveFile.filePath"
@@ -119,30 +135,38 @@ const rightActiveFile = computed(() => editorStore.getPaneActiveFile(1));
       :style="{ width: (100 - leftRatio) + '%' }"
       @mousedown="onPaneClick(1)"
     >
-      <template v-if="rightFiles.length > 0">
-        <EditorTabs :pane-index="1" />
-        <div class="pane-content">
-          <CallGraphTab
-            v-if="rightActiveFile?.type === 'call-graph' && rightActiveFile.graphData"
-            :tab-id="rightActiveFile.filePath"
-            :graph-data="rightActiveFile.graphData"
-          />
-          <CodeEditor
-            v-else-if="rightActiveFile"
-            ref="rightEditorRef"
-            :key="rightActiveFile.filePath"
-            :file-path="rightActiveFile.filePath"
-            :content="rightActiveFile.content"
-            :language="rightActiveFile.language"
-            :line="editorStore.activePaneIndex === 1 ? editorStore.targetLine : null"
-            @show-call-graph="(line: number, col: number) => emit('show-call-graph', line, col)"
-            @show-callers="(line: number, col: number) => emit('show-callers', line, col)"
-            @find-references="(line: number, col: number) => emit('find-references', line, col)"
-          />
-        </div>
-      </template>
-      <div v-else class="empty-pane">
-        <span>将文件拖到此处或通过右键菜单拆分</span>
+      <EditorTabs :pane-index="1" />
+      <div
+        v-if="rightActiveFile"
+        class="pane-content"
+        @dragover.prevent
+        @drop.prevent="onPaneDrop(1, $event)"
+      >
+        <CallGraphTab
+          v-if="rightActiveFile.type === 'call-graph' && rightActiveFile.graphData"
+          :tab-id="rightActiveFile.filePath"
+          :graph-data="rightActiveFile.graphData"
+        />
+        <CodeEditor
+          v-else
+          ref="rightEditorRef"
+          :key="rightActiveFile.filePath"
+          :file-path="rightActiveFile.filePath"
+          :content="rightActiveFile.content"
+          :language="rightActiveFile.language"
+          :line="editorStore.activePaneIndex === 1 ? editorStore.targetLine : null"
+          @show-call-graph="(line: number, col: number) => emit('show-call-graph', line, col)"
+          @show-callers="(line: number, col: number) => emit('show-callers', line, col)"
+          @find-references="(line: number, col: number) => emit('find-references', line, col)"
+        />
+      </div>
+      <div
+        v-else
+        class="empty-pane"
+        @dragover.prevent
+        @drop.prevent="onPaneDrop(1, $event)"
+      >
+        <span>将文件拖到此处</span>
       </div>
     </div>
   </div>
