@@ -137,7 +137,7 @@ watch(
 );
 
 watch(
-  () => props.lineSeq,
+  () => [props.line, props.lineSeq],
   () => {
     if (props.line) {
       revealLine(props.line);

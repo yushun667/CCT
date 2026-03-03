@@ -9,7 +9,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import Sidebar from "./Sidebar.vue";
 import StatusBar from "./StatusBar.vue";
 import AiPanel from "@/components/ai/AiPanel.vue";
-import DockviewEditor from "@/components/editor/DockviewEditor.vue";
+import SplitEditor from "@/components/editor/SplitEditor.vue";
 import WelcomeScreen from "@/components/welcome/WelcomeScreen.vue";
 import TerminalPanel from "@/components/terminal/TerminalPanel.vue";
 import ResultPanel from "@/components/search/ResultPanel.vue";
@@ -270,12 +270,14 @@ async function handleFindReferences(line: number, _col: number) {
       <a-layout class="center-column">
         <a-layout class="work-area">
           <a-layout-content class="main-content">
-            <DockviewEditor
-              @show-call-graph="handleShowCallGraph"
-              @show-callers="handleShowCallers"
-              @find-references="handleFindReferences"
-            />
-            <WelcomeScreen v-if="!editorStore.hasOpenFiles" class="welcome-overlay" />
+            <template v-if="editorStore.hasOpenFiles">
+              <SplitEditor
+                @show-call-graph="handleShowCallGraph"
+                @show-callers="handleShowCallers"
+                @find-references="handleFindReferences"
+              />
+            </template>
+            <WelcomeScreen v-else />
           </a-layout-content>
 
           <!-- AI 面板 -->
@@ -389,13 +391,6 @@ async function handleFindReferences(line: number, _col: number) {
   display: flex;
   flex-direction: column;
   background: var(--color-bg-1);
-  position: relative;
-}
-
-.welcome-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
 }
 
 .ai-panel-sider {
