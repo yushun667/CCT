@@ -169,8 +169,8 @@ async function loadCallGraph(sym: CctSymbol) {
 
   try {
     const [callerRels, calleeRels] = await Promise.all([
-      queryApi.queryCallers(projectId, sym.id, 5),
-      queryApi.queryCallees(projectId, sym.id, 5),
+      queryApi.queryCallers(projectId, sym.id, 1),
+      queryApi.queryCallees(projectId, sym.id, 1),
     ]);
 
     graphSymMap.set(sym.id, sym);

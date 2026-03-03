@@ -46,7 +46,7 @@ interface LayoutEdge {
   points: { x: number; y: number }[];
 }
 
-const NODE_W = 220;
+const NODE_W = 280;
 const NODE_H = 48;
 const nodes = ref<LayoutNode[]>([]);
 const edges = ref<LayoutEdge[]>([]);
@@ -194,6 +194,17 @@ function nodeBorderColor(kind: string): string {
 
 function shortFile(filePath: string): string {
   return filePath.split("/").pop() ?? filePath;
+}
+
+/**
+ * 从 qualified_name 提取简短的限定名用于节点显示。
+ * 例如 "clang::CodeGen::CodeGenTypes::getLLVMContext" → "CodeGenTypes::getLLVMContext"
+ * 保留最后两级以区分同名但不同类的方法。
+ */
+function shortQualifiedName(sym: CctSymbol): string {
+  const parts = sym.qualified_name.split("::");
+  if (parts.length <= 2) return sym.qualified_name;
+  return parts.slice(-2).join("::");
 }
 
 function isSelected(nodeId: string): boolean {
@@ -408,9 +419,9 @@ watch(
           font-family="Menlo, Monaco, monospace"
         >
           {{
-            node.sym.name.length > 28
-              ? node.sym.name.slice(0, 26) + "\u2026"
-              : node.sym.name
+            shortQualifiedName(node.sym).length > 32
+              ? shortQualifiedName(node.sym).slice(0, 30) + "\u2026"
+              : shortQualifiedName(node.sym)
           }}
         </text>
         <text
