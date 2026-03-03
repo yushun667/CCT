@@ -81,7 +81,7 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
     for (const r of rels) {
       const callerSym = graphSymMap.get(r.caller_id);
       if (!callerSym) continue;
-      newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
+      newEdges.push({ sourceId: callerSym.id, targetId: sym.id });
       if (!existingNames.has(callerSym.qualified_name)) {
         newCallers.push(callerSym);
         existingNames.add(callerSym.qualified_name);
@@ -137,7 +137,7 @@ async function handleQueryNodeCallees(sym: CctSymbol) {
     for (const r of rels) {
       const calleeSym = graphSymMap.get(r.callee_id);
       if (!calleeSym) continue;
-      newEdges.push({ sourceId: r.caller_id, targetId: r.callee_id });
+      newEdges.push({ sourceId: sym.id, targetId: calleeSym.id });
       if (!existingNames.has(calleeSym.qualified_name)) {
         newCallees.push(calleeSym);
         existingNames.add(calleeSym.qualified_name);

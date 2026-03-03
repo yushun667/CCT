@@ -117,12 +117,6 @@ function buildLayout() {
     }
   };
 
-  for (const caller of props.callers) {
-    addEdge(caller.id, props.rootSymbol.id);
-  }
-  for (const callee of props.callees) {
-    addEdge(props.rootSymbol.id, callee.id);
-  }
   if (props.extraEdges) {
     for (const edge of props.extraEdges) {
       addEdge(edge.sourceId, edge.targetId);

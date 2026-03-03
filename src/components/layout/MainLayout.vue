@@ -20,7 +20,7 @@ import { Message } from "@arco-design/web-vue";
 import { useI18n } from "vue-i18n";
 import * as editorApi from "@/api/editor";
 import * as queryApi from "@/api/query";
-import type { Symbol as CctSymbol, Project, CallGraphData } from "@/api/types";
+import type { Symbol as CctSymbol, Project, CallGraphData, GraphEdgeData } from "@/api/types";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 const { t } = useI18n();
@@ -191,19 +191,30 @@ async function loadCallGraph(sym: CctSymbol) {
       for (const s of fetched) graphSymMap.set(s.id, s);
     }
 
+    const callers = deduplicateSymbols(
+      callerRels
+        .map((r) => graphSymMap.get(r.caller_id))
+        .filter((s): s is CctSymbol => s != null),
+    );
+    const callees = deduplicateSymbols(
+      calleeRels
+        .map((r) => graphSymMap.get(r.callee_id))
+        .filter((s): s is CctSymbol => s != null),
+    );
+
+    const initialEdges: GraphEdgeData[] = [];
+    for (const c of callers) {
+      initialEdges.push({ sourceId: c.id, targetId: sym.id });
+    }
+    for (const c of callees) {
+      initialEdges.push({ sourceId: sym.id, targetId: c.id });
+    }
+
     const graphData: CallGraphData = {
       symbol: sym,
-      callers: deduplicateSymbols(
-        callerRels
-          .map((r) => graphSymMap.get(r.caller_id))
-          .filter((s): s is CctSymbol => s != null),
-      ),
-      callees: deduplicateSymbols(
-        calleeRels
-          .map((r) => graphSymMap.get(r.callee_id))
-          .filter((s): s is CctSymbol => s != null),
-      ),
-      extraEdges: [],
+      callers,
+      callees,
+      extraEdges: initialEdges,
     };
 
     editorStore.openCallGraph(graphData);
