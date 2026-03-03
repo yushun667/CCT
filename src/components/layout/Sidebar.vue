@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { useProjectStore } from "@/stores/project";
 import { useEditorStore } from "@/stores/editor";
@@ -7,10 +7,94 @@ import { useSettingsStore } from "@/stores/settings";
 import * as editorApi from "@/api/editor";
 import type { DirEntry } from "@/api/editor";
 
+import MdiFolder from "~icons/mdi/folder";
+import MdiFolderOpen from "~icons/mdi/folder-open";
+import MdiLanguageC from "~icons/mdi/language-c";
+import MdiLanguageCpp from "~icons/mdi/language-cpp";
+import MdiLanguageTypescript from "~icons/mdi/language-typescript";
+import MdiLanguageJavascript from "~icons/mdi/language-javascript";
+import MdiVuejs from "~icons/mdi/vuejs";
+import MdiLanguageRust from "~icons/mdi/language-rust";
+import MdiLanguagePython from "~icons/mdi/language-python";
+import MdiLanguageJava from "~icons/mdi/language-java";
+import MdiLanguageGo from "~icons/mdi/language-go";
+import MdiLanguageSwift from "~icons/mdi/language-swift";
+import MdiLanguageKotlin from "~icons/mdi/language-kotlin";
+import MdiLanguageRuby from "~icons/mdi/language-ruby";
+import MdiLanguageHtml5 from "~icons/mdi/language-html5";
+import MdiLanguageCss3 from "~icons/mdi/language-css3";
+import MdiLanguageMarkdown from "~icons/mdi/language-markdown";
+import MdiCodeJson from "~icons/mdi/code-json";
+import MdiXml from "~icons/mdi/xml";
+import MdiConsole from "~icons/mdi/console";
+import MdiGit from "~icons/mdi/git";
+import MdiFileCog from "~icons/mdi/file-cog";
+import MdiFileDocumentOutline from "~icons/mdi/file-document-outline";
+
 const { t } = useI18n();
 const projectStore = useProjectStore();
 const editorStore = useEditorStore();
 const settings = useSettingsStore();
+
+const fileIconMap: Record<string, Component> = {
+  ".c": MdiLanguageC,
+  ".h": MdiLanguageC,
+  ".cpp": MdiLanguageCpp,
+  ".cc": MdiLanguageCpp,
+  ".cxx": MdiLanguageCpp,
+  ".hpp": MdiLanguageCpp,
+  ".hxx": MdiLanguageCpp,
+  ".ts": MdiLanguageTypescript,
+  ".tsx": MdiLanguageTypescript,
+  ".js": MdiLanguageJavascript,
+  ".jsx": MdiLanguageJavascript,
+  ".vue": MdiVuejs,
+  ".rs": MdiLanguageRust,
+  ".py": MdiLanguagePython,
+  ".java": MdiLanguageJava,
+  ".go": MdiLanguageGo,
+  ".swift": MdiLanguageSwift,
+  ".kt": MdiLanguageKotlin,
+  ".kts": MdiLanguageKotlin,
+  ".rb": MdiLanguageRuby,
+  ".html": MdiLanguageHtml5,
+  ".htm": MdiLanguageHtml5,
+  ".css": MdiLanguageCss3,
+  ".scss": MdiLanguageCss3,
+  ".less": MdiLanguageCss3,
+  ".md": MdiLanguageMarkdown,
+  ".json": MdiCodeJson,
+  ".xml": MdiXml,
+  ".svg": MdiXml,
+  ".sh": MdiConsole,
+  ".bash": MdiConsole,
+  ".zsh": MdiConsole,
+  ".yaml": MdiFileCog,
+  ".yml": MdiFileCog,
+  ".toml": MdiFileCog,
+  ".ini": MdiFileCog,
+  ".conf": MdiFileCog,
+  ".cmake": MdiFileCog,
+};
+
+const fileNameIconMap: Record<string, Component> = {
+  ".gitignore": MdiGit,
+  ".gitattributes": MdiGit,
+  ".gitmodules": MdiGit,
+  "Makefile": MdiFileCog,
+  "CMakeLists.txt": MdiFileCog,
+  "Dockerfile": MdiConsole,
+};
+
+function getFileIcon(filename: string): Component {
+  if (fileNameIconMap[filename]) return fileNameIconMap[filename];
+  const dotIdx = filename.lastIndexOf(".");
+  if (dotIdx >= 0) {
+    const ext = filename.slice(dotIdx).toLowerCase();
+    if (fileIconMap[ext]) return fileIconMap[ext];
+  }
+  return MdiFileDocumentOutline;
+}
 
 interface TreeNode {
   key: string;
@@ -81,7 +165,7 @@ function onNodeClick(_: string[], data: { node?: TreeNode }) {
     <div v-if="!settings.sidebarCollapsed" class="sidebar-content">
       <!-- 项目名称标题 -->
       <div v-if="currentProject" class="project-header">
-        <icon-folder style="color: var(--color-primary-light-4); flex-shrink: 0" />
+        <MdiFolder class="project-icon" />
         <span class="project-name" :title="currentProject.source_root">
           {{ currentProject.name }}
         </span>
@@ -98,9 +182,11 @@ function onNodeClick(_: string[], data: { node?: TreeNode }) {
             size="small"
             @select="onNodeClick"
           >
-            <template #icon="{ node }">
-              <icon-folder v-if="!node.isLeaf" style="color: var(--color-primary-light-4)" />
-              <icon-code v-else style="color: var(--color-text-3)" />
+            <template #icon="{ node, expanded }">
+              <component
+                :is="node.isLeaf ? getFileIcon(node.title ?? '') : (expanded ? MdiFolderOpen : MdiFolder)"
+                :class="node.isLeaf ? 'file-icon' : 'folder-icon'"
+              />
             </template>
           </a-tree>
           <div v-else class="tree-empty">
@@ -116,7 +202,7 @@ function onNodeClick(_: string[], data: { node?: TreeNode }) {
     <div v-else class="sidebar-collapsed">
       <a-tooltip :content="t('sidebar.files')" position="right">
         <a-button type="text" @click="settings.toggleSidebar()">
-          <template #icon><icon-folder /></template>
+          <template #icon><MdiFolder /></template>
         </a-button>
       </a-tooltip>
     </div>
@@ -147,6 +233,12 @@ function onNodeClick(_: string[], data: { node?: TreeNode }) {
   flex-shrink: 0;
 }
 
+.project-icon {
+  color: var(--color-primary-light-4);
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
 .project-name {
   font-size: 12px;
   font-weight: 600;
@@ -154,6 +246,16 @@ function onNodeClick(_: string[], data: { node?: TreeNode }) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.folder-icon {
+  color: var(--color-primary-light-4);
+  font-size: 16px;
+}
+
+.file-icon {
+  color: var(--color-text-3);
+  font-size: 16px;
 }
 
 .file-tree-area {

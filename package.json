@@ -30,10 +30,12 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@iconify-json/mdi": "^1.2.3",
     "@tauri-apps/cli": "^2",
     "@types/node": "^22",
     "@vitejs/plugin-vue": "^5",
     "typescript": "^5.7.0",
+    "unplugin-icons": "^23.0.1",
     "vite": "^6",
     "vue-tsc": "^2"
   }

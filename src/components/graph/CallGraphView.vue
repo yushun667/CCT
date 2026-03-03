@@ -19,6 +19,9 @@ import { Snapline } from "@antv/x6-plugin-snapline";
 import { Selection } from "@antv/x6-plugin-selection";
 import dagre from "@dagrejs/dagre";
 import type { Symbol as CctSymbol } from "@/api/types";
+import MdiUndoVariant from "~icons/mdi/undo-variant";
+import MdiRedoVariant from "~icons/mdi/redo-variant";
+import MdiFitToScreenOutline from "~icons/mdi/fit-to-screen-outline";
 
 interface GraphEdgeData {
   sourceId: number;
@@ -413,7 +416,7 @@ watch(
           :disabled="!canUndo"
           @click.stop="emit('undo')"
         >
-          <icon-undo />
+          <MdiUndoVariant />
         </a-button>
       </a-tooltip>
       <a-tooltip content="重做查询 (Ctrl+Y)" position="left" mini>
@@ -423,12 +426,12 @@ watch(
           :disabled="!canRedo"
           @click.stop="emit('redo')"
         >
-          <icon-redo />
+          <MdiRedoVariant />
         </a-button>
       </a-tooltip>
       <a-tooltip content="重置视图" position="left" mini>
         <a-button size="small" shape="circle" @click.stop="resetView">
-          <icon-fullscreen />
+          <MdiFitToScreenOutline />
         </a-button>
       </a-tooltip>
     </div>
