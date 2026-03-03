@@ -1,12 +1,26 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSettingsStore } from "@/stores/settings";
 import { useProjectStore } from "@/stores/project";
+import RemoteProjectWizard from "@/components/project/RemoteProjectWizard.vue";
+
+import MdiSsh from "~icons/mdi/ssh";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
 const projectStore = useProjectStore();
+
+const showRemoteWizard = ref(false);
+
+function openRemoteWizard() {
+  showRemoteWizard.value = true;
+}
+
+function onRemoteSuccess() {
+  showRemoteWizard.value = false;
+  projectStore.fetchProjects();
+}
 
 const isRunning = computed(
   () =>
@@ -52,6 +66,20 @@ const progressText = computed(() => {
 <template>
   <div class="status-bar">
     <div class="status-left">
+      <!-- 远程连接 -->
+      <a-tooltip :content="t('project.newRemote')" position="top" mini>
+        <a-button
+          type="text"
+          size="mini"
+          class="status-icon-btn"
+          @click="openRemoteWizard"
+        >
+          <template #icon>
+            <MdiSsh class="status-ssh-icon" />
+          </template>
+        </a-button>
+      </a-tooltip>
+
       <!-- 解析状态 -->
       <span v-if="isRunning" class="status-item parse-running">
         <icon-loading style="animation: spin 1s linear infinite" />
@@ -103,6 +131,12 @@ const progressText = computed(() => {
       <span class="status-item">v0.1.0</span>
     </div>
   </div>
+
+  <RemoteProjectWizard
+    :visible="showRemoteWizard"
+    @update:visible="showRemoteWizard = $event"
+    @success="onRemoteSuccess"
+  />
 </template>
 
 <style scoped>
@@ -123,6 +157,17 @@ const progressText = computed(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.status-icon-btn {
+  color: var(--color-text-3);
+  padding: 0 4px;
+}
+.status-icon-btn:hover {
+  color: var(--color-text-1);
+}
+.status-ssh-icon {
+  font-size: 14px;
 }
 
 .status-item {

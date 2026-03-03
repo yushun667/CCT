@@ -251,20 +251,6 @@ async function handleFindReferences(line: number, _col: number) {
 
 <template>
   <a-layout class="main-layout">
-    <header class="title-bar">
-      <span class="title-bar-drag" data-tauri-drag-region />
-      <a-tooltip :content="t('shortcuts.toggleAiPanel')" position="bottom">
-        <a-button
-          type="text"
-          size="small"
-          class="title-bar-ai-btn"
-          :class="{ active: settings.aiPanelVisible }"
-          @click="settings.toggleAiPanel()"
-        >
-          <template #icon><icon-robot /></template>
-        </a-button>
-      </a-tooltip>
-    </header>
     <a-layout class="content-layout">
       <a-layout-sider
         :width="settings.sidebarWidth"
@@ -355,36 +341,6 @@ async function handleFindReferences(line: number, _col: number) {
 .main-layout {
   height: 100vh;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.title-bar {
-  flex-shrink: 0;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0 8px;
-  background: var(--cct-titlebar-bg, var(--color-bg-2));
-  color: var(--cct-titlebar-text, var(--color-text-1));
-  border-bottom: 1px solid var(--color-border);
-}
-
-.title-bar-drag {
-  flex: 1;
-  -webkit-app-region: drag;
-  app-region: drag;
-}
-
-.title-bar-ai-btn {
-  color: var(--color-text-2);
-}
-.title-bar-ai-btn:hover {
-  color: var(--color-primary-6);
-}
-.title-bar-ai-btn.active {
-  color: var(--color-primary-6);
 }
 
 .content-layout {

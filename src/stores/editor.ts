@@ -24,9 +24,6 @@ export const useEditorStore = defineStore("editor", () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  /** 拖拽中的 Tab 信息，drop 时从此读取（Tauri/WebView 下 dataTransfer.getData 可能不可用） */
-  const dragTabPayload = ref<{ paneIndex: number; fileIndex: number } | null>(null);
-
   const activePane = computed(() => panes.value[activePaneIndex.value]);
 
   const openFiles = computed(() => activePane.value.openFiles);
@@ -220,32 +217,6 @@ export const useEditorStore = defineStore("editor", () => {
     activePaneIndex.value = 0;
   }
 
-  function setDragTab(paneIndex: number, fileIndex: number) {
-    dragTabPayload.value = { paneIndex, fileIndex };
-  }
-
-  function clearDragTab() {
-    dragTabPayload.value = null;
-  }
-
-  /** 从 store 或 dataTransfer 读取拖拽数据，优先 store（兼容 Tauri/WebView） */
-  function getDragTabFromEvent(event: DragEvent): { paneIndex: number; fileIndex: number } | null {
-    const fromStore = dragTabPayload.value;
-    if (fromStore) return fromStore;
-    if (!event.dataTransfer) return null;
-    const raw =
-      event.dataTransfer.getData("application/x-editor-tab") ||
-      event.dataTransfer.getData("text/plain");
-    if (!raw) return null;
-    try {
-      const data = JSON.parse(raw) as { paneIndex: number; fileIndex: number };
-      if (typeof data.paneIndex === "number" && typeof data.fileIndex === "number") return data;
-    } catch {
-      // ignore
-    }
-    return null;
-  }
-
   function moveToPane(fromPaneIdx: number, toPaneIdx: number, fileIdx: number, insertIdx?: number) {
     if (toPaneIdx === 1 && !splitMode.value) {
       splitRight();
@@ -269,7 +240,6 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     activePaneIndex.value = toPaneIdx;
-    clearDragTab();
   }
 
   function closeOtherFiles(index: number, paneIdx?: number) {
@@ -361,9 +331,6 @@ export const useEditorStore = defineStore("editor", () => {
     splitRight,
     closeSplit,
     moveToPane,
-    setDragTab,
-    clearDragTab,
-    getDragTabFromEvent,
     closeOtherFiles,
     closeAllInPane,
     reorderFile,
