@@ -3,7 +3,7 @@
  * 可视化调用图 — 基于 @antv/x6 框架 + dagre 横向布局
  *
  * 中心节点为当前选中的函数，左侧为调用者（callers），右侧为被调用者（callees）。
- * 每个节点带有上下左右四个固定连接桩，边使用正交路由 + 圆弧转角。
+ * 边使用 manhattan 路由自动避障 + 圆弧转角，连接点由框架根据 boundary 策略自动选择。
  *
  * 交互：
  *   左键框选/单击选中       Ctrl/Meta+点击 — 多选
@@ -55,32 +55,6 @@ const contextMenu = ref({
   sym: null as CctSymbol | null,
 });
 
-/* ---------- 连接桩配置 ---------- */
-
-const portAttrs = {
-  circle: {
-    r: 3,
-    fill: "rgba(255,255,255,0.9)",
-    stroke: "rgba(0,0,0,0.25)",
-    strokeWidth: 1,
-    magnet: false,
-  },
-};
-
-const portGroups: Record<string, object> = {
-  left: { position: "left", attrs: portAttrs },
-  right: { position: "right", attrs: portAttrs },
-  top: { position: "top", attrs: portAttrs },
-  bottom: { position: "bottom", attrs: portAttrs },
-};
-
-const portItems = [
-  { group: "left", id: "port-left" },
-  { group: "right", id: "port-right" },
-  { group: "top", id: "port-top" },
-  { group: "bottom", id: "port-bottom" },
-];
-
 /* ---------- 辅助函数 ---------- */
 
 function nodeColor(kind: string): string {
@@ -112,34 +86,6 @@ function shortQualifiedName(sym: CctSymbol): string {
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 2) + "\u2026" : text;
-}
-
-/**
- * 根据源/目标节点中心的相对位置选择最合适的连接桩。
- *
- * 采用节点矩形对角线作为判断边界：将水平距离与垂直距离
- * 按节点宽高比归一化后比较，确保宽矩形的微小垂直偏移
- * 也能正确触发上下连接桩。
- */
-function choosePorts(
-  sx: number,
-  sy: number,
-  tx: number,
-  ty: number,
-): { sourcePort: string; targetPort: string } {
-  const dx = tx - sx;
-  const dy = ty - sy;
-  const absDx = Math.abs(dx);
-  const absDy = Math.abs(dy);
-
-  if (absDy * NODE_W > absDx * NODE_H) {
-    return dy >= 0
-      ? { sourcePort: "port-bottom", targetPort: "port-top" }
-      : { sourcePort: "port-top", targetPort: "port-bottom" };
-  }
-  return dx >= 0
-    ? { sourcePort: "port-right", targetPort: "port-left" }
-    : { sourcePort: "port-left", targetPort: "port-right" };
 }
 
 /* ---------- 上下文菜单 ---------- */
@@ -242,6 +188,12 @@ function initGraph() {
       maxScale: 10,
     },
     interacting: { nodeMovable: true },
+    connecting: {
+      anchor: "center",
+      connectionPoint: "boundary",
+      router: { name: "manhattan", args: { padding: 20 } },
+      connector: { name: "rounded", args: { radius: 8 } },
+    },
   });
 
   graph.use(
@@ -340,21 +292,17 @@ function buildGraph() {
   graph.clearCells();
 
   const callerIds = new Set(props.callers.map((s) => s.id));
-  const nodeCenters = new Map<string, { x: number; y: number }>();
 
   for (const [id, sym] of allSymbols) {
     const nd = g.node(nodeKey(id));
     if (!nd) continue;
-
-    const key = nodeKey(id);
-    nodeCenters.set(key, { x: nd.x, y: nd.y });
 
     let kind: "caller" | "root" | "callee" = "callee";
     if (id === props.rootSymbol.id) kind = "root";
     else if (callerIds.has(id)) kind = "caller";
 
     graph.addNode({
-      id: key,
+      id: nodeKey(id),
       x: nd.x - NODE_W / 2,
       y: nd.y - NODE_H / 2,
       width: NODE_W,
@@ -399,25 +347,14 @@ function buildGraph() {
           textVerticalAnchor: "middle",
         },
       },
-      ports: { groups: portGroups, items: portItems },
     });
   }
 
   for (const e of g.edges()) {
-    const sp = nodeCenters.get(e.v);
-    const tp = nodeCenters.get(e.w);
-    const ports =
-      sp && tp
-        ? choosePorts(sp.x, sp.y, tp.x, tp.y)
-        : { sourcePort: "port-right", targetPort: "port-left" };
-
     graph.addEdge({
-      source: { cell: e.v, port: ports.sourcePort },
-      target: { cell: e.w, port: ports.targetPort },
-      router: {
-        name: "manhattan",
-        args: { padding: 20 },
-      },
+      source: e.v,
+      target: e.w,
+      router: { name: "manhattan", args: { padding: 20 } },
       connector: { name: "rounded", args: { radius: 8 } },
       attrs: {
         line: {
