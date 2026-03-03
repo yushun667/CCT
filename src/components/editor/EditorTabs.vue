@@ -84,12 +84,15 @@ const dragOverIndex = ref(-1);
 const dragOverSide = ref<"left" | "right">("left");
 
 function onDragStart(index: number, event: DragEvent) {
-  if (!event.dataTransfer) return;
-  event.dataTransfer.effectAllowed = "move";
-  event.dataTransfer.setData(
-    "application/x-editor-tab",
-    JSON.stringify({ paneIndex: props.paneIndex, fileIndex: index }),
-  );
+  editorStore.setDragTab(props.paneIndex, index);
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(
+      "application/x-editor-tab",
+      JSON.stringify({ paneIndex: props.paneIndex, fileIndex: index }),
+    );
+    event.dataTransfer.setData("text/plain", JSON.stringify({ paneIndex: props.paneIndex, fileIndex: index }));
+  }
 }
 
 function onDragOver(index: number, event: DragEvent) {
@@ -108,12 +111,9 @@ function onDragLeave() {
 function onDrop(index: number, event: DragEvent) {
   event.preventDefault();
   dragOverIndex.value = -1;
-  if (!event.dataTransfer) return;
+  const data = editorStore.getDragTabFromEvent(event);
+  if (!data) return;
 
-  const raw = event.dataTransfer.getData("application/x-editor-tab");
-  if (!raw) return;
-
-  const data: { paneIndex: number; fileIndex: number } = JSON.parse(raw);
   const toIdx = dragOverSide.value === "right" ? index + 1 : index;
 
   if (data.paneIndex === props.paneIndex) {
@@ -126,12 +126,9 @@ function onDrop(index: number, event: DragEvent) {
 function onBarDrop(event: DragEvent) {
   event.preventDefault();
   dragOverIndex.value = -1;
-  if (!event.dataTransfer) return;
+  const data = editorStore.getDragTabFromEvent(event);
+  if (!data) return;
 
-  const raw = event.dataTransfer.getData("application/x-editor-tab");
-  if (!raw) return;
-
-  const data: { paneIndex: number; fileIndex: number } = JSON.parse(raw);
   const toIdx = files.value.length;
 
   if (data.paneIndex === props.paneIndex) {
@@ -143,6 +140,7 @@ function onBarDrop(event: DragEvent) {
 
 function onDragEnd() {
   dragOverIndex.value = -1;
+  editorStore.clearDragTab();
 }
 
 /* ---------- 辅助 ---------- */

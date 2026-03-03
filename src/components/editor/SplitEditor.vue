@@ -13,8 +13,6 @@ import CodeEditor from "./CodeEditor.vue";
 import WelcomeScreen from "@/components/welcome/WelcomeScreen.vue";
 import CallGraphTab from "@/components/graph/CallGraphTab.vue";
 
-const DND_MIME = "application/x-editor-tab";
-
 const emit = defineEmits<{
   (e: "show-call-graph", line: number, column: number): void;
   (e: "show-callers", line: number, column: number): void;
@@ -73,10 +71,9 @@ const rightActiveFile = computed(() => editorStore.getPaneActiveFile(1));
 
 function onPaneDrop(paneIdx: number, event: DragEvent) {
   event.preventDefault();
-  if (!event.dataTransfer) return;
-  const raw = event.dataTransfer.getData(DND_MIME);
-  if (!raw) return;
-  const data: { paneIndex: number; fileIndex: number } = JSON.parse(raw);
+  event.stopPropagation();
+  const data = editorStore.getDragTabFromEvent(event);
+  if (!data) return;
   if (data.paneIndex === paneIdx) return;
   editorStore.moveToPane(data.paneIndex, paneIdx, data.fileIndex);
 }
@@ -84,10 +81,9 @@ function onPaneDrop(paneIdx: number, event: DragEvent) {
 /** 未拆分时拖到右侧条：先拆分再移动到右侧窗格 */
 function onDropToRightWhenUnsplit(event: DragEvent) {
   event.preventDefault();
-  if (!event.dataTransfer) return;
-  const raw = event.dataTransfer.getData(DND_MIME);
-  if (!raw) return;
-  const data: { paneIndex: number; fileIndex: number } = JSON.parse(raw);
+  event.stopPropagation();
+  const data = editorStore.getDragTabFromEvent(event);
+  if (!data) return;
   editorStore.moveToPane(data.paneIndex, 1, data.fileIndex);
 }
 </script>
