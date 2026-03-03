@@ -19,6 +19,7 @@ const props = defineProps({
   content: { type: String, default: "" },
   language: { type: String, default: "cpp" },
   line: { type: Number as PropType<number | null>, default: null },
+  lineSeq: { type: Number, default: 0 },
 });
 
 const emit = defineEmits<{
@@ -136,10 +137,10 @@ watch(
 );
 
 watch(
-  () => props.line,
-  (newLine) => {
-    if (newLine) {
-      revealLine(newLine);
+  () => props.lineSeq,
+  () => {
+    if (props.line) {
+      revealLine(props.line);
     }
   },
 );
