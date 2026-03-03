@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * 可视化调用图 — 使用 dagre 树状布局 + SVG 渲染
+ * 可视化调用图 — 使用 dagre 横向布局 + SVG 渲染
  *
- * 中心节点为当前选中的函数，上方为调用者（callers），下方为被调用者（callees）。
+ * 中心节点为当前选中的函数，左侧为调用者（callers），右侧为被调用者（callees）。
  * 每个节点显示函数名 + 文件名:行号。
  *
  * 交互：单击选中节点，双击跳转代码，右键菜单查询调用者/被调用者（1层，增量追加）。
@@ -53,10 +53,11 @@ const edges = ref<LayoutEdge[]>([]);
 const svgWidth = ref(800);
 const svgHeight = ref(600);
 
-const viewBox = computed(() => {
+const baseBox = computed(() => {
   const pad = 40;
-  if (nodes.value.length === 0)
-    return `0 0 ${svgWidth.value} ${svgHeight.value}`;
+  if (nodes.value.length === 0) {
+    return { x: 0, y: 0, w: svgWidth.value, h: svgHeight.value };
+  }
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
@@ -67,7 +68,22 @@ const viewBox = computed(() => {
     maxX = Math.max(maxX, n.x + n.width / 2);
     maxY = Math.max(maxY, n.y + n.height / 2);
   }
-  return `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`;
+  return {
+    x: minX - pad,
+    y: minY - pad,
+    w: maxX - minX + pad * 2,
+    h: maxY - minY + pad * 2,
+  };
+});
+
+/** 通过 viewBox 实现缩放和平移，保持 SVG 矢量清晰度 */
+const viewBox = computed(() => {
+  const b = baseBox.value;
+  const vw = b.w / scale.value;
+  const vh = b.h / scale.value;
+  const cx = b.x + b.w / 2 - pan.value.x;
+  const cy = b.y + b.h / 2 - pan.value.y;
+  return `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`;
 });
 
 const pan = ref({ x: 0, y: 0 });
@@ -88,7 +104,7 @@ const contextMenu = ref({
 function buildLayout() {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
-    rankdir: "TB",
+    rankdir: "LR",
     nodesep: 30,
     ranksep: 60,
     marginx: 20,
@@ -258,26 +274,41 @@ function handleBgClick() {
 function handleWheel(e: WheelEvent) {
   e.preventDefault();
   const factor = e.deltaY > 0 ? 0.9 : 1.1;
-  scale.value = Math.max(0.01, scale.value * factor);
+  const newScale = Math.max(0.1, Math.min(10, scale.value * factor));
+  if (svgRef.value) {
+    const rect = svgRef.value.getBoundingClientRect();
+    const b = baseBox.value;
+    const vw = b.w / scale.value;
+    const vh = b.h / scale.value;
+    const newVw = b.w / newScale;
+    const newVh = b.h / newScale;
+    const fracX = (e.clientX - rect.left) / rect.width;
+    const fracY = (e.clientY - rect.top) / rect.height;
+    pan.value = {
+      x: pan.value.x + (vw - newVw) * (0.5 - fracX),
+      y: pan.value.y + (vh - newVh) * (0.5 - fracY),
+    };
+  }
+  scale.value = newScale;
 }
 
 function handleMouseDown(e: MouseEvent) {
   if (e.button === 0) {
     dragging.value = true;
-    dragStart.value = {
-      x: e.clientX - pan.value.x,
-      y: e.clientY - pan.value.y,
-    };
+    dragStart.value = { x: e.clientX, y: e.clientY };
   }
 }
 
 function handleMouseMove(e: MouseEvent) {
-  if (dragging.value) {
-    pan.value = {
-      x: e.clientX - dragStart.value.x,
-      y: e.clientY - dragStart.value.y,
-    };
-  }
+  if (!dragging.value || !svgRef.value) return;
+  const rect = svgRef.value.getBoundingClientRect();
+  const b = baseBox.value;
+  const vw = b.w / scale.value;
+  const vh = b.h / scale.value;
+  const dx = ((e.clientX - dragStart.value.x) / rect.width) * vw;
+  const dy = ((e.clientY - dragStart.value.y) / rect.height) * vh;
+  pan.value = { x: pan.value.x + dx, y: pan.value.y + dy };
+  dragStart.value = { x: e.clientX, y: e.clientY };
 }
 
 function handleMouseUp() {
@@ -328,10 +359,7 @@ watch(
       class="graph-svg"
       :viewBox="viewBox"
       preserveAspectRatio="xMidYMid meet"
-      :style="{
-        transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
-        cursor: dragging ? 'grabbing' : 'grab',
-      }"
+      :style="{ cursor: dragging ? 'grabbing' : 'grab' }"
     >
       <defs>
         <marker
@@ -522,7 +550,6 @@ watch(
 .graph-svg {
   width: 100%;
   height: 100%;
-  transform-origin: center center;
 }
 
 .graph-node:hover rect {
