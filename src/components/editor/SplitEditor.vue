@@ -80,6 +80,16 @@ function onPaneDrop(paneIdx: number, event: DragEvent) {
   if (data.paneIndex === paneIdx) return;
   editorStore.moveToPane(data.paneIndex, paneIdx, data.fileIndex);
 }
+
+/** 未拆分时拖到右侧条：先拆分再移动到右侧窗格 */
+function onDropToRightWhenUnsplit(event: DragEvent) {
+  event.preventDefault();
+  if (!event.dataTransfer) return;
+  const raw = event.dataTransfer.getData(DND_MIME);
+  if (!raw) return;
+  const data: { paneIndex: number; fileIndex: number } = JSON.parse(raw);
+  editorStore.moveToPane(data.paneIndex, 1, data.fileIndex);
+}
 </script>
 
 <template>
@@ -118,6 +128,16 @@ function onPaneDrop(paneIdx: number, event: DragEvent) {
         </div>
       </template>
       <WelcomeScreen v-else />
+    </div>
+
+    <!-- 未拆分时：右侧拖放区，拖入后自动拆分并放入右侧窗格 -->
+    <div
+      v-if="!editorStore.splitMode && leftFiles.length > 0"
+      class="drop-zone-unsplit"
+      @dragover.prevent
+      @drop.prevent="onDropToRightWhenUnsplit"
+    >
+      <span>拖到此处以在右侧打开</span>
     </div>
 
     <!-- Split Divider -->
@@ -195,6 +215,30 @@ function onPaneDrop(paneIdx: number, event: DragEvent) {
 .pane-content {
   flex: 1;
   overflow: hidden;
+}
+
+.drop-zone-unsplit {
+  width: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-fill-1);
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  margin: 4px;
+  color: var(--color-text-3);
+  font-size: 11px;
+  writing-mode: vertical-rl;
+  letter-spacing: 2px;
+  cursor: default;
+  transition: background 0.15s, border-color 0.15s;
+}
+.drop-zone-unsplit:hover,
+.drop-zone-unsplit:focus-within {
+  background: var(--color-fill-2);
+  border-color: rgb(var(--primary-6));
+  color: var(--color-text-2);
 }
 
 .split-divider {

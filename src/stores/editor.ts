@@ -218,6 +218,9 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   function moveToPane(fromPaneIdx: number, toPaneIdx: number, fileIdx: number, insertIdx?: number) {
+    if (toPaneIdx === 1 && !splitMode.value) {
+      splitRight();
+    }
     const from = panes.value[fromPaneIdx];
     const to = panes.value[toPaneIdx];
     if (!from || !to) return;
@@ -225,7 +228,9 @@ export const useEditorStore = defineStore("editor", () => {
 
     const [file] = from.openFiles.splice(fileIdx, 1);
     const idx = insertIdx ?? to.openFiles.length;
-    to.openFiles.splice(idx, 0, file);
+    const newFiles = [...to.openFiles];
+    newFiles.splice(idx, 0, file);
+    to.openFiles = newFiles;
     to.activeFileIndex = idx;
 
     if (from.openFiles.length === 0) {
