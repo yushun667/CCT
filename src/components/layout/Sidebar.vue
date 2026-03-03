@@ -178,6 +178,7 @@ function onNodeClick(_: string[], data: { node?: TreeNode }) {
             v-if="treeData.length > 0"
             :data="treeData"
             :load-more="onLoadMore"
+            :action-on-node-click="'expand'"
             block-node
             size="small"
             @select="onNodeClick"
