@@ -11,13 +11,12 @@
  *   双击节点 — 跳转代码      Delete/Backspace — 删除选中
  *   拖拽节点 — 移动（对齐辅助线）
  *   滚轮 — 缩放              Ctrl+Z/Y — 撤销/重做查询
- *   左下角缩略图导航          右下角操作按钮
+ *   右下角操作按钮
  */
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { Graph } from "@antv/x6";
 import { Snapline } from "@antv/x6-plugin-snapline";
 import { Selection } from "@antv/x6-plugin-selection";
-import { MiniMap } from "@antv/x6-plugin-minimap";
 import dagre from "@dagrejs/dagre";
 import type { Symbol as CctSymbol } from "@/api/types";
 
@@ -47,7 +46,6 @@ const NODE_W = 280;
 const NODE_H = 48;
 
 const containerRef = ref<HTMLDivElement | null>(null);
-const minimapRef = ref<HTMLDivElement | null>(null);
 let graph: Graph | null = null;
 
 const contextMenu = ref({
@@ -114,6 +112,28 @@ function shortQualifiedName(sym: CctSymbol): string {
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 2) + "\u2026" : text;
+}
+
+/**
+ * 根据源/目标节点中心的相对位置选择最合适的连接桩。
+ * 水平差 >= 垂直差时走左右桩，否则走上下桩。
+ */
+function choosePorts(
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+): { sourcePort: string; targetPort: string } {
+  const dx = tx - sx;
+  const dy = ty - sy;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? { sourcePort: "port-right", targetPort: "port-left" }
+      : { sourcePort: "port-left", targetPort: "port-right" };
+  }
+  return dy >= 0
+    ? { sourcePort: "port-bottom", targetPort: "port-top" }
+    : { sourcePort: "port-top", targetPort: "port-bottom" };
 }
 
 /* ---------- 上下文菜单 ---------- */
@@ -238,17 +258,6 @@ function initGraph() {
       showNodeSelectionBox: true,
     }),
   );
-
-  if (minimapRef.value) {
-    graph.use(
-      new MiniMap({
-        container: minimapRef.value,
-        width: 180,
-        height: 120,
-        padding: 10,
-      }),
-    );
-  }
 
   graph.on("node:dblclick", ({ node }) => {
     const sym = node.getData()?.sym as CctSymbol | undefined;
@@ -385,9 +394,16 @@ function buildGraph() {
   }
 
   for (const e of g.edges()) {
+    const sn = g.node(e.v);
+    const tn = g.node(e.w);
+    const ports =
+      sn && tn
+        ? choosePorts(sn.x, sn.y, tn.x, tn.y)
+        : { sourcePort: "port-right", targetPort: "port-left" };
+
     graph.addEdge({
-      source: { cell: e.v, port: "port-right" },
-      target: { cell: e.w, port: "port-left" },
+      source: { cell: e.v, port: ports.sourcePort },
+      target: { cell: e.w, port: ports.targetPort },
       router: { name: "orth" },
       connector: { name: "rounded", args: { radius: 8 } },
       attrs: {
@@ -437,9 +453,6 @@ watch(
 <template>
   <div class="call-graph-view" @contextmenu.prevent>
     <div ref="containerRef" class="graph-container" />
-
-    <!-- 左下角缩略图 -->
-    <div ref="minimapRef" class="graph-minimap" />
 
     <!-- 右下角操作按钮 -->
     <div class="graph-actions">
@@ -513,18 +526,6 @@ watch(
 .graph-container {
   width: 100%;
   height: 100%;
-}
-
-.graph-minimap {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  z-index: 10;
-  border: 1px solid var(--color-border, #e5e6eb);
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--color-bg-2, #fff);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .graph-actions {
