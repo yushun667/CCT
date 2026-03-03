@@ -11,11 +11,13 @@
  *   右键节点 — 查询菜单    Delete/Backspace — 删除选中
  *   拖拽节点 — 移动位置（带对齐辅助线）
  *   滚轮 — 缩放            Shift+拖拽空白 — 平移画布
+ *   Ctrl+Z — 撤销           Ctrl+Shift+Z / Ctrl+Y — 重做
  */
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { Graph } from "@antv/x6";
 import { Snapline } from "@antv/x6-plugin-snapline";
 import { Selection } from "@antv/x6-plugin-selection";
+import { History } from "@antv/x6-plugin-history";
 import dagre from "@dagrejs/dagre";
 import type { Symbol as CctSymbol } from "@/api/types";
 
@@ -42,6 +44,9 @@ const NODE_H = 48;
 
 const containerRef = ref<HTMLDivElement | null>(null);
 let graph: Graph | null = null;
+
+const canUndo = ref(false);
+const canRedo = ref(false);
 
 const contextMenu = ref({
   visible: false,
@@ -168,11 +173,25 @@ function onCtxDelete() {
 /* ---------- 键盘事件 ---------- */
 
 function handleKeyDown(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+
   if (e.key === "Delete" || e.key === "Backspace") {
-    const tag = (e.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
     e.preventDefault();
     deleteSelected();
+    return;
+  }
+
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key === "z" && !e.shiftKey) {
+    e.preventDefault();
+    graph?.undo();
+  } else if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) {
+    e.preventDefault();
+    graph?.redo();
+  } else if (mod && e.key === "y") {
+    e.preventDefault();
+    graph?.redo();
   }
 }
 
@@ -217,6 +236,17 @@ function initGraph() {
       showNodeSelectionBox: true,
     }),
   );
+
+  graph.use(
+    new History({
+      enabled: true,
+    }),
+  );
+
+  graph.on("history:change", () => {
+    canUndo.value = graph?.canUndo() ?? false;
+    canRedo.value = graph?.canRedo() ?? false;
+  });
 
   graph.on("node:dblclick", ({ node }) => {
     const sym = node.getData()?.sym as CctSymbol | undefined;
@@ -406,11 +436,29 @@ watch(
       </span>
       <span class="graph-hint">
         框选/点击选中 · 双击跳转 · 右键菜单 · 滚轮缩放 · Shift+拖拽平移 ·
-        Delete 删除
+        Delete 删除 · Ctrl+Z/Y 撤销重做
       </span>
-      <a-button size="mini" type="text" @click.stop="resetView">
-        重置视图
-      </a-button>
+      <span class="toolbar-actions">
+        <a-button
+          size="mini"
+          type="text"
+          :disabled="!canUndo"
+          @click.stop="graph?.undo()"
+        >
+          <icon-undo />
+        </a-button>
+        <a-button
+          size="mini"
+          type="text"
+          :disabled="!canRedo"
+          @click.stop="graph?.redo()"
+        >
+          <icon-redo />
+        </a-button>
+        <a-button size="mini" type="text" @click.stop="resetView">
+          重置视图
+        </a-button>
+      </span>
     </div>
 
     <div ref="containerRef" class="graph-container" />
@@ -493,6 +541,16 @@ watch(
 .graph-hint {
   background: var(--color-bg-2);
   padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--color-bg-2);
+  padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid var(--color-border);
 }
