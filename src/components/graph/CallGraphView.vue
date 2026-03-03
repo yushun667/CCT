@@ -43,11 +43,11 @@ interface LayoutNode {
 interface LayoutEdge {
   from: string;
   to: string;
-  points: { x: number; y: number }[];
 }
 
 const NODE_W = 280;
 const NODE_H = 48;
+const PORT_R = 3;
 const nodes = ref<LayoutNode[]>([]);
 const edges = ref<LayoutEdge[]>([]);
 const svgWidth = ref(800);
@@ -84,6 +84,12 @@ const viewBox = computed(() => {
   const cx = b.x + b.w / 2 - pan.value.x;
   const cy = b.y + b.h / 2 - pan.value.y;
   return `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`;
+});
+
+const nodeMap = computed(() => {
+  const map = new Map<string, LayoutNode>();
+  for (const n of nodes.value) map.set(n.id, n);
+  return map;
 });
 
 const pan = ref({ x: 0, y: 0 });
@@ -167,27 +173,52 @@ function buildLayout() {
 
   const layoutEdges: LayoutEdge[] = [];
   for (const e of g.edges()) {
-    const edgeData = g.edge(e);
-    if (edgeData && edgeData.points) {
-      layoutEdges.push({
-        from: e.v,
-        to: e.w,
-        points: edgeData.points as { x: number; y: number }[],
-      });
-    }
+    layoutEdges.push({ from: e.v, to: e.w });
   }
 
   nodes.value = layoutNodes;
   edges.value = layoutEdges;
 }
 
-function edgePath(pts: { x: number; y: number }[]): string {
-  if (pts.length < 2) return "";
-  let d = `M ${pts[0].x} ${pts[0].y}`;
-  for (let i = 1; i < pts.length; i++) {
-    d += ` L ${pts[i].x} ${pts[i].y}`;
+/**
+ * 在源节点右端口与目标节点左端口之间生成正交折线路径，
+ * 折弯处使用半径 r 的圆弧平滑过渡。
+ */
+function orthogonalEdgePath(fromId: string, toId: string): string {
+  const source = nodeMap.value.get(fromId);
+  const target = nodeMap.value.get(toId);
+  if (!source || !target) return "";
+
+  const sx = source.x + source.width / 2;
+  const sy = source.y;
+  const ex = target.x - target.width / 2;
+  const ey = target.y;
+
+  if (Math.abs(sy - ey) < 1) return `M ${sx} ${sy} L ${ex} ${ey}`;
+
+  const midX = (sx + ex) / 2;
+  const dy = ey - sy;
+  const signY = dy > 0 ? 1 : -1;
+  const r = Math.min(
+    8,
+    Math.abs(midX - sx) - 1,
+    Math.abs(ex - midX) - 1,
+    Math.abs(dy) / 2,
+  );
+
+  if (r < 1) {
+    return `M ${sx} ${sy} L ${midX} ${sy} L ${midX} ${ey} L ${ex} ${ey}`;
   }
-  return d;
+
+  const sweep = signY > 0 ? 1 : 0;
+  return [
+    `M ${sx} ${sy}`,
+    `L ${midX - r} ${sy}`,
+    `A ${r} ${r} 0 0 ${sweep} ${midX} ${sy + signY * r}`,
+    `L ${midX} ${ey - signY * r}`,
+    `A ${r} ${r} 0 0 ${sweep} ${midX + r} ${ey}`,
+    `L ${ex} ${ey}`,
+  ].join(" ");
 }
 
 function nodeColor(kind: string): string {
@@ -379,7 +410,7 @@ watch(
         <path
           v-for="(edge, idx) in edges"
           :key="idx"
-          :d="edgePath(edge.points)"
+          :d="orthogonalEdgePath(edge.from, edge.to)"
           fill="none"
           stroke="#555"
           stroke-width="1.5"
@@ -456,6 +487,11 @@ watch(
         >
           {{ shortFile(node.sym.file_path) }}:{{ node.sym.line }}
         </text>
+        <!-- 上下左右四个固定连接桩 -->
+        <circle cx="0" :cy="node.height / 2" :r="PORT_R" class="port" />
+        <circle :cx="node.width" :cy="node.height / 2" :r="PORT_R" class="port" />
+        <circle :cx="node.width / 2" cy="0" :r="PORT_R" class="port" />
+        <circle :cx="node.width / 2" :cy="node.height" :r="PORT_R" class="port" />
       </g>
 
       <text
@@ -554,6 +590,12 @@ watch(
 
 .graph-node:hover rect {
   filter: brightness(1.15);
+}
+
+.port {
+  fill: rgba(255, 255, 255, 0.9);
+  stroke: rgba(0, 0, 0, 0.25);
+  stroke-width: 1;
 }
 </style>
 
