@@ -146,8 +146,13 @@ watch(
 
 function revealLine(line: number) {
   if (!editorInstance) return;
+  editorInstance.setSelection({
+    startLineNumber: line,
+    startColumn: 1,
+    endLineNumber: line,
+    endColumn: 1,
+  });
   editorInstance.revealLineInCenter(line);
-  editorInstance.setPosition({ lineNumber: line, column: 1 });
 }
 
 defineExpose({ revealLine });

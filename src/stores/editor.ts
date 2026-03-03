@@ -217,15 +217,16 @@ export const useEditorStore = defineStore("editor", () => {
     activePaneIndex.value = 0;
   }
 
-  function moveToPane(fromPaneIdx: number, toPaneIdx: number, fileIdx: number) {
+  function moveToPane(fromPaneIdx: number, toPaneIdx: number, fileIdx: number, insertIdx?: number) {
     const from = panes.value[fromPaneIdx];
     const to = panes.value[toPaneIdx];
     if (!from || !to) return;
     if (fileIdx < 0 || fileIdx >= from.openFiles.length) return;
 
     const [file] = from.openFiles.splice(fileIdx, 1);
-    to.openFiles.push(file);
-    to.activeFileIndex = to.openFiles.length - 1;
+    const idx = insertIdx ?? to.openFiles.length;
+    to.openFiles.splice(idx, 0, file);
+    to.activeFileIndex = idx;
 
     if (from.openFiles.length === 0) {
       from.activeFileIndex = -1;
@@ -234,6 +235,48 @@ export const useEditorStore = defineStore("editor", () => {
     }
 
     activePaneIndex.value = toPaneIdx;
+  }
+
+  function closeOtherFiles(index: number, paneIdx?: number) {
+    const pi = paneIdx ?? activePaneIndex.value;
+    const pane = panes.value[pi];
+    if (!pane) return;
+    if (index < 0 || index >= pane.openFiles.length) return;
+    pane.openFiles = [pane.openFiles[index]];
+    pane.activeFileIndex = 0;
+  }
+
+  function closeAllInPane(paneIdx?: number) {
+    const pi = paneIdx ?? activePaneIndex.value;
+    const pane = panes.value[pi];
+    if (!pane) return;
+    pane.openFiles = [];
+    pane.activeFileIndex = -1;
+    if (splitMode.value && pi === 1) {
+      closeSplit();
+    }
+  }
+
+  function reorderFile(paneIdx: number, fromIdx: number, toIdx: number) {
+    const pane = panes.value[paneIdx];
+    if (!pane) return;
+    if (fromIdx < 0 || fromIdx >= pane.openFiles.length) return;
+    if (toIdx < 0 || toIdx > pane.openFiles.length) return;
+    if (fromIdx === toIdx) return;
+
+    const [file] = pane.openFiles.splice(fromIdx, 1);
+    const dest = toIdx > fromIdx ? toIdx - 1 : toIdx;
+    pane.openFiles.splice(dest, 0, file);
+    pane.activeFileIndex = dest;
+  }
+
+  function splitFileToRight(fileIdx: number, fromPaneIdx?: number) {
+    const pi = fromPaneIdx ?? activePaneIndex.value;
+    if (!splitMode.value) {
+      splitRight();
+    }
+    const targetPane = pi === 0 ? 1 : 0;
+    moveToPane(pi, targetPane, fileIdx);
   }
 
   async function loadFileSymbols(projectId: string, filePath: string) {
@@ -283,6 +326,10 @@ export const useEditorStore = defineStore("editor", () => {
     splitRight,
     closeSplit,
     moveToPane,
+    closeOtherFiles,
+    closeAllInPane,
+    reorderFile,
+    splitFileToRight,
     loadFileSymbols,
     closeAllFiles,
   };
