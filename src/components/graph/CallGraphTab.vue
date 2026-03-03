@@ -29,6 +29,51 @@ const callers = computed(() => props.graphData.callers);
 const callees = computed(() => props.graphData.callees);
 const extraEdges = computed(() => props.graphData.extraEdges);
 
+/* ---------- 查询操作级别的撤销/重做栈 ---------- */
+
+interface QuerySnapshot {
+  callers: CctSymbol[];
+  callees: CctSymbol[];
+  extraEdges: GraphEdgeData[];
+}
+
+const undoStack = ref<QuerySnapshot[]>([]);
+const redoStack = ref<QuerySnapshot[]>([]);
+const canUndo = computed(() => undoStack.value.length > 0);
+const canRedo = computed(() => redoStack.value.length > 0);
+
+function takeSnapshot(): QuerySnapshot {
+  return {
+    callers: [...props.graphData.callers],
+    callees: [...props.graphData.callees],
+    extraEdges: [...props.graphData.extraEdges],
+  };
+}
+
+function saveBeforeQuery() {
+  undoStack.value.push(takeSnapshot());
+  redoStack.value = [];
+}
+
+function applySnapshot(snap: QuerySnapshot) {
+  editorStore.updateCallGraphData(props.tabId, {
+    symbol: props.graphData.symbol,
+    ...snap,
+  });
+}
+
+function handleUndo() {
+  if (undoStack.value.length === 0) return;
+  redoStack.value.push(takeSnapshot());
+  applySnapshot(undoStack.value.pop()!);
+}
+
+function handleRedo() {
+  if (redoStack.value.length === 0) return;
+  undoStack.value.push(takeSnapshot());
+  applySnapshot(redoStack.value.pop()!);
+}
+
 watch(
   () => props.graphData.symbol.id,
   () => {
@@ -89,6 +134,7 @@ async function handleQueryNodeCallers(sym: CctSymbol) {
     }
 
     if (newCallers.length > 0 || newEdges.length > 0) {
+      saveBeforeQuery();
       const updated: CallGraphData = {
         symbol: props.graphData.symbol,
         callers: newCallers.length > 0
@@ -145,6 +191,7 @@ async function handleQueryNodeCallees(sym: CctSymbol) {
     }
 
     if (newCallees.length > 0 || newEdges.length > 0) {
+      saveBeforeQuery();
       const updated: CallGraphData = {
         symbol: props.graphData.symbol,
         callers: props.graphData.callers,
@@ -178,9 +225,13 @@ function navigateToSymbol(sym: CctSymbol) {
         :callers="callers"
         :callees="callees"
         :extra-edges="extraEdges"
+        :can-undo="canUndo"
+        :can-redo="canRedo"
         @navigate="navigateToSymbol"
         @query-callers="handleQueryNodeCallers"
         @query-callees="handleQueryNodeCallees"
+        @undo="handleUndo"
+        @redo="handleRedo"
       />
     </a-spin>
   </div>

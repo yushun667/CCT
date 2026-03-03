@@ -6,18 +6,18 @@
  * 每个节点带有上下左右四个固定连接桩，边使用正交路由 + 圆弧转角。
  *
  * 交互：
- *   单击节点 — 选中       Ctrl/Meta+点击 — 多选切换
- *   框选拖拽 — 批量选中    双击节点 — 跳转代码
- *   右键节点 — 查询菜单    Delete/Backspace — 删除选中
- *   拖拽节点 — 移动位置（带对齐辅助线）
- *   滚轮 — 缩放            Shift+拖拽空白 — 平移画布
- *   Ctrl+Z — 撤销           Ctrl+Shift+Z / Ctrl+Y — 重做
+ *   左键框选/单击选中       Ctrl/Meta+点击 — 多选
+ *   右键拖拽空白 — 平移      右键节点 — 查询菜单
+ *   双击节点 — 跳转代码      Delete/Backspace — 删除选中
+ *   拖拽节点 — 移动（对齐辅助线）
+ *   滚轮 — 缩放              Ctrl+Z/Y — 撤销/重做查询
+ *   左下角缩略图导航          右下角操作按钮
  */
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { Graph } from "@antv/x6";
 import { Snapline } from "@antv/x6-plugin-snapline";
 import { Selection } from "@antv/x6-plugin-selection";
-import { History } from "@antv/x6-plugin-history";
+import { MiniMap } from "@antv/x6-plugin-minimap";
 import dagre from "@dagrejs/dagre";
 import type { Symbol as CctSymbol } from "@/api/types";
 
@@ -31,22 +31,24 @@ const props = defineProps<{
   callers: CctSymbol[];
   callees: CctSymbol[];
   extraEdges?: GraphEdgeData[];
+  canUndo?: boolean;
+  canRedo?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "navigate", sym: CctSymbol): void;
   (e: "query-callers", sym: CctSymbol): void;
   (e: "query-callees", sym: CctSymbol): void;
+  (e: "undo"): void;
+  (e: "redo"): void;
 }>();
 
 const NODE_W = 280;
 const NODE_H = 48;
 
 const containerRef = ref<HTMLDivElement | null>(null);
+const minimapRef = ref<HTMLDivElement | null>(null);
 let graph: Graph | null = null;
-
-const canUndo = ref(false);
-const canRedo = ref(false);
 
 const contextMenu = ref({
   visible: false,
@@ -185,13 +187,13 @@ function handleKeyDown(e: KeyboardEvent) {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key === "z" && !e.shiftKey) {
     e.preventDefault();
-    graph?.undo();
+    emit("undo");
   } else if (mod && (e.key === "Z" || (e.key === "z" && e.shiftKey))) {
     e.preventDefault();
-    graph?.redo();
+    emit("redo");
   } else if (mod && e.key === "y") {
     e.preventDefault();
-    graph?.redo();
+    emit("redo");
   }
 }
 
@@ -205,7 +207,7 @@ function initGraph() {
     autoResize: true,
     panning: {
       enabled: true,
-      modifiers: "shift",
+      eventTypes: ["rightMouseDown"],
     },
     mousewheel: {
       enabled: true,
@@ -237,16 +239,16 @@ function initGraph() {
     }),
   );
 
-  graph.use(
-    new History({
-      enabled: true,
-    }),
-  );
-
-  graph.on("history:change", () => {
-    canUndo.value = graph?.canUndo() ?? false;
-    canRedo.value = graph?.canRedo() ?? false;
-  });
+  if (minimapRef.value) {
+    graph.use(
+      new MiniMap({
+        container: minimapRef.value,
+        width: 180,
+        height: 120,
+        padding: 10,
+      }),
+    );
+  }
 
   graph.on("node:dblclick", ({ node }) => {
     const sym = node.getData()?.sym as CctSymbol | undefined;
@@ -392,7 +394,12 @@ function buildGraph() {
         line: {
           stroke: "#a0a0a0",
           strokeWidth: 1.5,
-          targetMarker: { name: "block", width: 8, height: 6, fill: "#a0a0a0" },
+          targetMarker: {
+            name: "block",
+            width: 8,
+            height: 6,
+            fill: "#a0a0a0",
+          },
         },
       },
     });
@@ -429,40 +436,39 @@ watch(
 
 <template>
   <div class="call-graph-view" @contextmenu.prevent>
-    <div class="graph-toolbar">
-      <span class="graph-legend">
-        <span class="legend-dot" style="background: #52c41a" /> 调用者
-        <span class="legend-dot" style="background: #1890ff" /> 当前函数
-        <span class="legend-dot" style="background: #fa8c16" /> 被调用
-      </span>
-      <span class="graph-hint">
-        框选/点击选中 · 双击跳转 · 右键菜单 · 滚轮缩放 · Shift+拖拽平移 ·
-        Delete 删除 · Ctrl+Z/Y 撤销重做
-      </span>
-      <span class="toolbar-actions">
+    <div ref="containerRef" class="graph-container" />
+
+    <!-- 左下角缩略图 -->
+    <div ref="minimapRef" class="graph-minimap" />
+
+    <!-- 右下角操作按钮 -->
+    <div class="graph-actions">
+      <a-tooltip content="撤销查询 (Ctrl+Z)" position="left" mini>
         <a-button
-          size="mini"
-          type="text"
+          size="small"
+          shape="circle"
           :disabled="!canUndo"
-          @click.stop="graph?.undo()"
+          @click.stop="emit('undo')"
         >
           <icon-undo />
         </a-button>
+      </a-tooltip>
+      <a-tooltip content="重做查询 (Ctrl+Y)" position="left" mini>
         <a-button
-          size="mini"
-          type="text"
+          size="small"
+          shape="circle"
           :disabled="!canRedo"
-          @click.stop="graph?.redo()"
+          @click.stop="emit('redo')"
         >
           <icon-redo />
         </a-button>
-        <a-button size="mini" type="text" @click.stop="resetView">
-          重置视图
+      </a-tooltip>
+      <a-tooltip content="重置视图" position="left" mini>
+        <a-button size="small" shape="circle" @click.stop="resetView">
+          <icon-fullscreen />
         </a-button>
-      </span>
+      </a-tooltip>
     </div>
-
-    <div ref="containerRef" class="graph-container" />
 
     <!-- 右键菜单 -->
     <Teleport to="body">
@@ -504,61 +510,31 @@ watch(
   user-select: none;
 }
 
-.graph-toolbar {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  right: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  z-index: 10;
-  font-size: 11px;
-  color: var(--color-text-3);
-  pointer-events: none;
-}
-
-.graph-toolbar > * {
-  pointer-events: auto;
-}
-
-.graph-legend {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--color-bg-2);
-  padding: 4px 10px;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-}
-
-.legend-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.graph-hint {
-  background: var(--color-bg-2);
-  padding: 4px 10px;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-}
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: var(--color-bg-2);
-  padding: 2px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-}
-
 .graph-container {
   width: 100%;
   height: 100%;
+}
+
+.graph-minimap {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 10;
+  border: 1px solid var(--color-border, #e5e6eb);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-bg-2, #fff);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.graph-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 </style>
 
