@@ -74,6 +74,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          args: --target ${{ matrix.platform.target }}
           tagName: ${{ github.ref_name }}
           releaseName: "CCT ${{ github.ref_name }}"
           releaseBody: |
