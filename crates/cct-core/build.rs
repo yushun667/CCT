@@ -11,19 +11,44 @@ use std::process::Command;
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(no_clang_bridge)");
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let llvm_root = PathBuf::from(&manifest_dir)
-        .parent().unwrap()       // crates/
-        .parent().unwrap()       // CCT/
-        .join("third_party")
-        .join("llvm");
+    let manifest_path = PathBuf::from(&manifest_dir);
+    let workspace_root = manifest_path
+        .parent().unwrap()
+        .parent().unwrap()
+        .to_path_buf();
 
-    let llvm_config = llvm_root.join("bin").join("llvm-config");
+    let llvm_config_exe = if cfg!(windows) { "llvm-config.exe" } else { "llvm-config" };
+    // 1) 优先使用 third_party/llvm
+    let third_party_llvm = workspace_root.join("third_party").join("llvm");
+    let llvm_config_third = third_party_llvm.join("bin").join(llvm_config_exe);
 
-    if !llvm_config.exists() {
-        println!("cargo:warning=LLVM not found at {:?}, skipping C++ bridge compilation", llvm_root);
+    let (llvm_root, llvm_config) = if llvm_config_third.exists() {
+        (third_party_llvm.clone(), llvm_config_third)
+    } else if let Ok(prefix) = env::var("LLVM_PREFIX") {
+        let root = PathBuf::from(&prefix);
+        let config = root.join("bin").join(llvm_config_exe);
+        if config.exists() {
+            (root, config)
+        } else {
+            println!("cargo:warning=LLVM_PREFIX={:?} but {} not found", prefix, llvm_config_exe);
+            println!("cargo:rustc-cfg=no_clang_bridge");
+            return;
+        }
+    } else if let Ok(path) = which_llvm_config_prefix() {
+        let root = PathBuf::from(&path);
+        let config = root.join("bin").join(llvm_config_exe);
+        if config.exists() {
+            (root, config)
+        } else {
+            println!("cargo:warning=llvm-config --prefix={:?} but bin/{} missing", path, llvm_config_exe);
+            println!("cargo:rustc-cfg=no_clang_bridge");
+            return;
+        }
+    } else {
+        println!("cargo:warning=LLVM not found (no third_party/llvm, no LLVM_PREFIX, no llvm-config in PATH), skipping C++ bridge");
         println!("cargo:rustc-cfg=no_clang_bridge");
         return;
-    }
+    };
 
     let llvm_include = llvm_root.join("include");
     let llvm_lib = llvm_root.join("lib");
@@ -126,12 +151,28 @@ fn main() {
         println!("cargo:rustc-link-lib=stdc++");
     }
 
-    // Add LLVM lib to rpath for dynamic dependencies (libunwind etc.)
+    // Add LLVM lib to rpath for dynamic dependencies (libunwind etc.) — Unix only
+    #[cfg(unix)]
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", llvm_lib.display());
 
     // Rerun if C++ sources change
     println!("cargo:rerun-if-changed=cpp/src/bridge.cpp");
     println!("cargo:rerun-if-changed=cpp/include/bridge.h");
+}
+
+/// 若 PATH 中有 llvm-config 或 llvm-config-18，返回其 --prefix
+fn which_llvm_config_prefix() -> Result<String, ()> {
+    for name in &["llvm-config-18", "llvm-config"] {
+        if let Ok(output) = Command::new(name).arg("--prefix").output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+    Err(())
 }
 
 fn run_llvm_config(llvm_config: &PathBuf, args: &[&str]) -> String {

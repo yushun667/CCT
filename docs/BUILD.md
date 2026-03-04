@@ -1,5 +1,20 @@
 # CCT 构建与发布
 
+## 编译产物是否包含所有运行需要的东西
+
+**结论**：CI/Release 构建**已包含完整功能**（含 LLVM/Clang 解析引擎），安装包可直接用于本地 C/C++ 源码解析与调用图分析。
+
+| 内容 | 是否包含 | 说明 |
+|------|----------|------|
+| 应用本体（前端 + 后端二进制） | ✅ | 安装即用 |
+| 系统 WebView 依赖 | ✅ | 各平台安装包会处理或声明依赖 |
+| **LLVM/Clang 解析引擎** | ✅ | CI 中安装 LLVM 18 并链接，本地解析可用 |
+| 远程 cct-agent | ❌ | 需从 Release 的 Agent 构建产物单独下载并部署到远程服务器 |
+
+**本地开发**：若未安装 LLVM，可设置 `LLVM_PREFIX` 或使用 `third_party/llvm/`，再执行 `npm run tauri build`。
+
+---
+
 ## 三平台安装包（GitHub Actions）
 
 推送 **tag**（格式 `v*`，如 `v0.1.0`）到 GitHub 后，会自动触发 [Release 工作流](.github/workflows/release.yml)，在 **Windows、macOS、Linux** 上构建并生成安装包。

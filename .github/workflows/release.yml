@@ -62,6 +62,32 @@ jobs:
             libssl-dev \
             libxdo-dev
 
+      - name: Install LLVM 18 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 18
+          sudo apt-get install -y clang-18 llvm-18-dev libclang-18-dev
+          echo "LLVM_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Install LLVM 18 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@18
+          echo "LLVM_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
+
+      - name: Install LLVM 18 (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install 7zip -y
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.0/clang+llvm-18.1.0-x86_64-pc-windows-msvc.tar.xz"
+          Invoke-WebRequest -Uri $url -OutFile llvm.tar.xz -UseBasicParsing
+          7z x llvm.tar.xz -ollvm_tmp
+          7z x llvm_tmp\clang+llvm-18.1.0-x86_64-pc-windows-msvc.tar -oC:\
+          echo "LLVM_PREFIX=C:\clang+llvm-18.1.0-x86_64-pc-windows-msvc" >> $env:GITHUB_ENV
+        shell: pwsh
+
       - name: Remove local cargo config
         shell: bash
         run: rm -f .cargo/config.toml
@@ -98,7 +124,6 @@ jobs:
             - **macOS**: 下载 `.dmg` 文件
             - **Linux**: 下载 `.deb` 或 `.AppImage` 文件
 
-            > 注意：当前构建不包含 LLVM/Clang 解析引擎。
-            > 需要在本地安装 LLVM 18 并将其放入 `third_party/llvm/` 目录以启用代码解析功能。
+            > 本构建包含 LLVM/Clang 解析引擎，支持本地 C/C++ 源码解析与调用图分析。
           releaseDraft: true
           prerelease: false
