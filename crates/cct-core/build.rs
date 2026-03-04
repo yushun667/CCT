@@ -22,13 +22,13 @@ fn main() {
     let third_party_llvm = workspace_root.join("third_party").join("llvm");
     let llvm_config_third = third_party_llvm.join("bin").join(llvm_config_exe);
 
-    let (llvm_root, llvm_config) = if llvm_config_third.exists() {
-        (third_party_llvm.clone(), llvm_config_third)
+    let (llvm_root, llvm_config, use_static) = if llvm_config_third.exists() {
+        (third_party_llvm.clone(), llvm_config_third, true)
     } else if let Ok(prefix) = env::var("LLVM_PREFIX") {
         let root = PathBuf::from(&prefix);
         let config = root.join("bin").join(llvm_config_exe);
         if config.exists() {
-            (root, config)
+            (root, config, false)
         } else {
             println!("cargo:warning=LLVM_PREFIX={:?} but {} not found", prefix, llvm_config_exe);
             println!("cargo:rustc-cfg=no_clang_bridge");
@@ -38,7 +38,7 @@ fn main() {
         let root = PathBuf::from(&path);
         let config = root.join("bin").join(llvm_config_exe);
         if config.exists() {
-            (root, config)
+            (root, config, false)
         } else {
             println!("cargo:warning=llvm-config --prefix={:?} but bin/{} missing", path, llvm_config_exe);
             println!("cargo:rustc-cfg=no_clang_bridge");
@@ -110,8 +110,9 @@ fn main() {
         "clangSupport",
     ];
 
+    let link_type = if use_static { "static" } else { "dylib" };
     for lib in &clang_libs {
-        println!("cargo:rustc-link-lib=static={}", lib);
+        println!("cargo:rustc-link-lib={}={}", link_type, lib);
     }
 
     // LLVM libraries from llvm-config
@@ -123,7 +124,7 @@ fn main() {
 
     for lib in llvm_libs_str.split_whitespace() {
         if let Some(name) = lib.strip_prefix("-l") {
-            println!("cargo:rustc-link-lib=static={}", name);
+            println!("cargo:rustc-link-lib={}={}", link_type, name);
         }
     }
 

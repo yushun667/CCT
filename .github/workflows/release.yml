@@ -83,8 +83,9 @@ jobs:
           choco install 7zip -y
           $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.0/clang+llvm-18.1.0-x86_64-pc-windows-msvc.tar.xz"
           Invoke-WebRequest -Uri $url -OutFile llvm.tar.xz -UseBasicParsing
-          7z x llvm.tar.xz -ollvm_tmp
-          7z x llvm_tmp\clang+llvm-18.1.0-x86_64-pc-windows-msvc.tar -oC:\
+          7z x llvm.tar.xz -o.
+          $tarName = "clang+llvm-18.1.0-x86_64-pc-windows-msvc.tar"
+          if (Test-Path $tarName) { 7z x $tarName -oC:\ } else { 7z x (Get-ChildItem *.tar).Name -oC:\ }
           echo "LLVM_PREFIX=C:\clang+llvm-18.1.0-x86_64-pc-windows-msvc" >> $env:GITHUB_ENV
         shell: pwsh
 
