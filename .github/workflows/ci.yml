@@ -69,18 +69,11 @@ jobs:
           brew install llvm@18
           echo "LLVM_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
 
-      - name: Install LLVM 18 (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install 7zip -y
-          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.0/clang+llvm-18.1.0-x86_64-pc-windows-msvc.tar.xz"
-          Invoke-WebRequest -Uri $url -OutFile llvm.tar.xz -UseBasicParsing
-          $outDir = $env:GITHUB_WORKSPACE
-          7z x llvm.tar.xz "-o$outDir"
-          $tarFile = Get-ChildItem -Path $outDir -Filter "*.tar" | Select-Object -First 1
-          if ($tarFile) { 7z x $tarFile.FullName "-oC:\" }
-          echo "LLVM_PREFIX=C:\clang+llvm-18.1.0-x86_64-pc-windows-msvc" >> $env:GITHUB_ENV
-        shell: pwsh
+      # Windows 暂不安装 LLVM：C++ 桥接需 Clang 编译，MSVC 无法正确编译 LLVM 头与 bridge（C++17/ setjmp）。
+      # Windows 构建为 no_clang_bridge（仅界面）；完整解析功能见 Linux/macOS 构建。
+      # - name: Install LLVM 18 (Windows)
+      #   if: runner.os == 'Windows'
+      #   ...
 
       - name: Remove local cargo config
         shell: bash
