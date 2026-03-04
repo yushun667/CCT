@@ -42,9 +42,18 @@ jobs:
       - name: Build cct-agent
         run: cargo build --release --package cct-agent --target ${{ matrix.target }}
 
+      - name: Prepare artifact path
+        run: |
+          mkdir -p dist
+          if [ -f "target/${{ matrix.target }}/release/cct-agent" ]; then
+            cp "target/${{ matrix.target }}/release/cct-agent" dist/cct-agent
+          else
+            cp target/release/cct-agent dist/cct-agent
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: cct-agent-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/cct-agent
+          path: dist/cct-agent
           if-no-files-found: error

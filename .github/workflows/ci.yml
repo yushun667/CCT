@@ -58,6 +58,17 @@ jobs:
         shell: bash
         run: rm -f .cargo/config.toml
 
+      - name: Fix icon.ico for Windows RC (3.00 format)
+        if: runner.os == 'Windows'
+        run: |
+          pip install Pillow --quiet
+          python -c "
+          from PIL import Image
+          img = Image.open('src-tauri/icons/32x32.png').convert('RGBA')
+          sizes = [(16,16), (32,32), (48,48), (64,64)]
+          img.save('src-tauri/icons/icon.ico', format='ICO', sizes=sizes, bitmap_format='bmp')
+          "
+
       - name: Install npm dependencies
         run: npm ci
 

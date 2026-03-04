@@ -25,7 +25,7 @@ jobs:
             os: macos-14
             target: aarch64-apple-darwin
           - name: macOS-x64
-            os: macos-13
+            os: macos-14-large
             target: x86_64-apple-darwin
           - name: Windows
             os: windows-latest
@@ -65,6 +65,17 @@ jobs:
       - name: Remove local cargo config
         shell: bash
         run: rm -f .cargo/config.toml
+
+      - name: Fix icon.ico for Windows RC (3.00 format)
+        if: runner.os == 'Windows'
+        run: |
+          pip install Pillow --quiet
+          python -c "
+          from PIL import Image
+          img = Image.open('src-tauri/icons/32x32.png').convert('RGBA')
+          sizes = [(16,16), (32,32), (48,48), (64,64)]
+          img.save('src-tauri/icons/icon.ico', format='ICO', sizes=sizes, bitmap_format='bmp')
+          "
 
       - name: Install npm dependencies
         run: npm ci
